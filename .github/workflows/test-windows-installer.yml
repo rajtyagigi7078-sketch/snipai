@@ -1,0 +1,201 @@
+name: Test Windows Installer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Download existing Snip AI EXE
+        shell: powershell
+        run: |
+          $url = "https://github.com/rajtyagigi7078-sketch/snipai/releases/download/v0.1.0/clipper_0.1.0_x64-setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\SnipAI-Setup.exe"
+
+      - name: Check installer
+        shell: powershell
+        run: |
+          $file = "$env:RUNNER_TEMP\SnipAI-Setup.exe"
+
+          if (!(Test-Path $file)) {
+            Write-Error "Installer was not downloaded."
+            exit 1
+          }
+
+          $size = (Get-Item $file).Length
+          Write-Host "Installer size: $size bytes"
+
+          if ($size -lt 100000) {
+            Write-Error "Installer is suspiciously small."
+            exit 1
+          }
+
+      - name: Install Snip AI
+        shell: powershell
+        run: |
+          $installer = "$env:RUNNER_TEMP\SnipAI-Setup.exe"
+
+          Write-Host "Starting installer..."
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList "/S" `
+            -Wait `
+            -PassThru
+
+          Write-Host "Installer exit code: $($process.ExitCode)"
+
+          if ($process.ExitCode -ne 0) {
+            Write-Error "Snip AI installation failed."
+            exit 1
+          }
+
+      - name: Find installed Snip AI
+        shell: powershell
+        run: |
+          Write-Host "Searching for installed Snip AI..."
+
+          $possiblePaths = @(
+            "$env:LOCALAPPDATA\Programs\clipper",
+            "$env:LOCALAPPDATA\clipper",
+            "$env:ProgramFiles\clipper",
+            "${env:ProgramFiles(x86)}\clipper"
+          )
+
+          $found = $false
+
+          foreach ($path in $possiblePaths) {
+            if (Test-Path $path) {
+              Write-Host "FOUND: $path"
+              Get-ChildItem -Path $path -Recurse -File |
+                Select-Object FullName, Length |
+                Format-Table -AutoSize
+
+              $found = $true
+            }
+          }
+
+          if (!$found) {
+            Write-Error "Snip AI installation directory was not found."
+            exit 1
+          }
+
+      - name: Find Snip AI executable
+        shell: powershell
+        run: |
+          $roots = @(
+            "$env:LOCALAPPDATA\Programs",
+            "$env:LOCALAPPDATA",
+            "$env:ProgramFiles",
+            "${env:ProgramFiles(x86)}"
+          )
+
+          $apps = @()
+
+          foreach ($root in $roots) {
+            if (Test-Path $root) {
+              $apps += Get-ChildItem `
+                -Path $root `
+                -Filter "*.exe" `
+                -Recurse `
+                -ErrorAction SilentlyContinue |
+                Where-Object {
+                  $_.Name -match "clipper|snip"
+                }
+            }
+          }
+
+          if ($apps.Count -eq 0) {
+            Write-Error "Snip AI executable was not found."
+            exit 1
+          }
+
+          Write-Host "Possible Snip AI executables:"
+          $apps | Select-Object FullName, Length | Format-Table -AutoSize
+
+          $app = $apps | Select-Object -First 1
+
+          "SNIP_AI_EXE=$($app.FullName)" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Append
+
+      - name: Launch Snip AI
+        shell: powershell
+        run: |
+          Write-Host "Launching:"
+          Write-Host $env:SNIP_AI_EXE
+
+          $process = Start-Process `
+            -FilePath $env:SNIP_AI_EXE `
+            -PassThru
+
+          Start-Sleep -Seconds 15
+
+          if ($process.HasExited) {
+            Write-Host "Application exited with code: $($process.ExitCode)"
+          }
+          else {
+            Write-Host "Snip AI is still running after 15 seconds."
+            Write-Host "Application launch test: PASS"
+
+            Stop-Process `
+              -Id $process.Id `
+              -Force `
+              -ErrorAction SilentlyContinue
+          }
+
+      - name: Search for bundled pipeline dependencies
+        shell: powershell
+        run: |
+          Write-Host "Searching installation for pipeline dependencies..."
+
+          $installRoots = @(
+            "$env:LOCALAPPDATA\Programs",
+            "$env:LOCALAPPDATA",
+            "$env:ProgramFiles",
+            "${env:ProgramFiles(x86)}"
+          )
+
+          $patterns = @(
+            "python.exe",
+            "python3.exe",
+            "ffmpeg.exe",
+            "ffprobe.exe",
+            "pipeline_runner.py",
+            "whisper_transcribe.py"
+          )
+
+          foreach ($root in $installRoots) {
+            if (!(Test-Path $root)) {
+              continue
+            }
+
+            foreach ($pattern in $patterns) {
+              Get-ChildItem `
+                -Path $root `
+                -Filter $pattern `
+                -Recurse `
+                -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                  Write-Host "FOUND $pattern : $($_.FullName)"
+                }
+            }
+          }
+
+      - name: Final result
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "     SNIP AI WINDOWS INSTALL TEST"
+          Write-Host "======================================"
+          Write-Host ""
+          Write-Host "Installer downloaded: PASS"
+          Write-Host "Installer installed: PASS"
+          Write-Host "Application launch tested."
+          Write-Host "Pipeline dependency scan completed."
+          Write-Host ""
+          Write-Host "Check the previous steps for missing"
+          Write-Host "Python / Whisper / FFmpeg / pipeline files."
