@@ -1,0 +1,78 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env
+
+# Local Netlify folder
+.netlify
+
+# Environment secrets
+.env.*
+!.env.example
+
+# Local/generated files
+__pycache__/
+*.pyc
+backups/
+.billing-backup/
+
+# Backup files
+*.backup
+*.backup.*
+*.before-*
+*.billing-backup
+*.gallery-backup
+*.selection-backup
+*.step1-backup
+*.broken-*
+*.backup-before-*
+
+# Supabase local CLI state
+supabase/.temp/
+
+# Backup files
+*.backup
+*.backup.*
+*.before-*
+*.billing-backup
+*.gallery-backup
+*.selection-backup
+*.step1-backup
+*.broken-*
+*.backup-before-*
+
+# Supabase local CLI state
+supabase/.temp/
+
+# Backup files with tilde
+*~
+
+# Backup files with tilde
+*~
+
+# Backup copies
+*.backup-*
+*.backup
+*.before_*
+*.before-*
