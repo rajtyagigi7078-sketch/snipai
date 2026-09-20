@@ -1,10 +1,12 @@
 name: Build Windows App
 
 on:
-  workflow_dispatch:
   push:
+    branches:
+      - develop
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,8 +25,294 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install frontend dependencies
         run: npm ci
+
+      # ------------------------------------------------------
+      # WINDOWS RUNTIME
+      # ------------------------------------------------------
+
+      - name: Prepare Windows runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $runtime = "windows-runtime"
+          $python = "$runtime\python"
+
+          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+          New-Item -ItemType Directory -Force -Path "$runtime\pipeline" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$runtime\ffmpeg" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$runtime\whisper-model" | Out-Null
+          New-Item -ItemType Directory -Force -Path $python | Out-Null
+
+          Write-Host "Creating Windows Python virtual environment..."
+
+          python -m venv $python
+
+          & "$python\Scripts\python.exe" -m pip install --upgrade pip
+
+          & "$python\Scripts\python.exe" -m pip install `
+            "faster-whisper==1.2.1" `
+            "yt-dlp==2026.8.19"
+
+          Write-Host "Windows Python runtime ready."
+
+      # ------------------------------------------------------
+      # PIPELINE FILES
+      # ------------------------------------------------------
+
+      - name: Prepare pipeline files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $pipeline = "windows-runtime/pipeline"
+
+          # These files are already part of the repository's
+          # windows-runtime directory.
+          $required = @(
+            "$pipeline/pipeline_runner.py",
+            "$pipeline/story_event_map.py",
+            "$pipeline/generation_selector.py",
+            "$pipeline/render_clips_simple.py"
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              throw "Required bundled pipeline file missing: $file"
+            }
+          }
+
+          # Always use the current production Whisper script
+          # from the repository root.
+          Copy-Item `
+            "whisper_transcribe.py" `
+            "$pipeline/whisper_transcribe.py" `
+            -Force
+
+          Write-Host "Bundled pipeline files:"
+          Get-ChildItem $pipeline
+
+      # ------------------------------------------------------
+      # FFMPEG
+      # ------------------------------------------------------
+
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          winget install `
+            --id Gyan.FFmpeg.Shared `
+            --exact `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements
+
+      - name: Locate and bundle FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Searching for ffmpeg.exe..."
+
+          $ffmpeg = Get-ChildItem `
+            -Path "C:\Program Files","C:\Users\runneradmin\AppData\Local" `
+            -Filter "ffmpeg.exe" `
+            -Recurse `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+          if (-not $ffmpeg) {
+            throw "ffmpeg.exe was not found."
+          }
+
+          Write-Host "Searching for ffprobe.exe..."
+
+          $ffprobe = Get-ChildItem `
+            -Path "C:\Program Files","C:\Users\runneradmin\AppData\Local" `
+            -Filter "ffprobe.exe" `
+            -Recurse `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+          if (-not $ffprobe) {
+            throw "ffprobe.exe was not found."
+          }
+
+          Copy-Item `
+            $ffmpeg.FullName `
+            "windows-runtime/ffmpeg/ffmpeg.exe" `
+            -Force
+
+          Copy-Item `
+            $ffprobe.FullName `
+            "windows-runtime/ffmpeg/ffprobe.exe" `
+            -Force
+
+          Write-Host "Bundled FFmpeg:"
+          Get-ChildItem "windows-runtime/ffmpeg"
+
+      # ------------------------------------------------------
+      # WHISPER MODEL
+      # ------------------------------------------------------
+
+      - name: Download Whisper base model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = Resolve-Path `
+            "windows-runtime/python/Scripts/python.exe"
+
+          $modelRoot = `
+            (Resolve-Path "windows-runtime/whisper-model").Path
+
+          $env:SNIP_MODEL_ROOT = $modelRoot
+
+          @"
+          import os
+          import shutil
+          from pathlib import Path
+          from huggingface_hub import snapshot_download
+
+          root = Path(os.environ["SNIP_MODEL_ROOT"]).resolve()
+          cache_dir = root / "cache"
+
+          print("Downloading faster-whisper base model...")
+          print(f"Cache: {cache_dir}")
+
+          snapshot_path = snapshot_download(
+              repo_id="Systran/faster-whisper-base",
+              cache_dir=str(cache_dir),
+          )
+
+          snapshot = Path(snapshot_path).resolve()
+
+          print(f"Downloaded model snapshot: {snapshot}")
+
+          model_dir = root / "model"
+
+          if model_dir.exists():
+              shutil.rmtree(model_dir)
+
+          model_dir.mkdir(
+              parents=True,
+              exist_ok=True,
+          )
+
+          for item in snapshot.iterdir():
+              destination = model_dir / item.name
+
+              if item.is_dir():
+                  shutil.copytree(
+                      item,
+                      destination,
+                      dirs_exist_ok=True,
+                  )
+              else:
+                  shutil.copy2(
+                      item,
+                      destination,
+                  )
+
+          print("Bundled model directory:")
+          print(model_dir)
+
+          required = [
+              "config.json",
+              "model.bin",
+          ]
+
+          for name in required:
+              path = model_dir / name
+
+              if not path.exists():
+                  raise RuntimeError(
+                      f"Required Whisper model file missing: {path}"
+                  )
+
+          print("Whisper base model verified.")
+          "@ | Set-Content `
+            "windows-runtime/download_model.py"
+
+          & $python "windows-runtime/download_model.py"
+
+          Remove-Item `
+            "windows-runtime/download_model.py" `
+            -Force
+
+          # The temporary Hugging Face cache is no longer needed
+          # because the actual model has been copied to /model.
+          if (Test-Path "windows-runtime/whisper-model/cache") {
+            Remove-Item `
+              "windows-runtime/whisper-model/cache" `
+              -Recurse `
+              -Force
+          }
+
+          Write-Host "Final Whisper model contents:"
+          Get-ChildItem `
+            "windows-runtime/whisper-model/model" `
+            -Recurse |
+            Select-Object FullName
+
+      # ------------------------------------------------------
+      # VERIFY RUNTIME
+      # ------------------------------------------------------
+
+      - name: Verify Windows runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = `
+            "windows-runtime/python/Scripts/python.exe"
+
+          $checks = @(
+            $python,
+            "windows-runtime/ffmpeg/ffmpeg.exe",
+            "windows-runtime/ffmpeg/ffprobe.exe",
+            "windows-runtime/pipeline/pipeline_runner.py",
+            "windows-runtime/pipeline/story_event_map.py",
+            "windows-runtime/pipeline/generation_selector.py",
+            "windows-runtime/pipeline/render_clips_simple.py",
+            "windows-runtime/pipeline/whisper_transcribe.py",
+            "windows-runtime/whisper-model/model/config.json",
+            "windows-runtime/whisper-model/model/model.bin"
+          )
+
+          foreach ($file in $checks) {
+            if (-not (Test-Path $file)) {
+              throw "Runtime verification failed. Missing: $file"
+            }
+          }
+
+          & $python -c "import faster_whisper; print('faster-whisper: OK')"
+
+          & $python -c "import yt_dlp; print('yt-dlp: OK')"
+
+          & $python -c "from faster_whisper import WhisperModel; print('WhisperModel: OK')"
+
+          Write-Host ""
+          Write-Host "===== WINDOWS RUNTIME READY ====="
+          Write-Host ""
+
+          Get-ChildItem `
+            windows-runtime `
+            -Recurse `
+            -File |
+            Measure-Object Length -Sum
+
+      # ------------------------------------------------------
+      # BUILD
+      # ------------------------------------------------------
 
       - name: Build Windows installer
         uses: tauri-apps/tauri-action@v0
