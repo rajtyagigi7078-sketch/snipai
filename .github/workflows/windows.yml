@@ -74,13 +74,13 @@ jobs:
 
           $pipeline = "windows-runtime/pipeline"
 
-          # These files are already part of the repository's
-          # windows-runtime directory.
+          # All pipeline files required by the portable runtime.
           $required = @(
             "$pipeline/pipeline_runner.py",
             "$pipeline/story_event_map.py",
             "$pipeline/generation_selector.py",
-            "$pipeline/render_clips_simple.py"
+            "$pipeline/render_clips_simple.py",
+            "$pipeline/caption_engine.py"
           )
 
           foreach ($file in $required) {
