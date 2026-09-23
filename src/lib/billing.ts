@@ -1,4 +1,4 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { load } from "@cashfreepayments/cashfree-js";
 import { supabase } from "./supabase";
 
 export type BillingState = {
@@ -141,8 +141,53 @@ export async function verifyLifetimePayment(
   return data;
 }
 
+async function waitForPaymentVerification(
+  orderId: string,
+) {
+  const attempts = 15;
+
+  for (
+    let attempt = 0;
+    attempt < attempts;
+    attempt++
+  ) {
+    try {
+      const result =
+        await verifyLifetimePayment(
+          orderId,
+        );
+
+      if (result?.active) {
+        return result;
+      }
+
+      console.log(
+        `[Billing] Payment verification attempt ${
+          attempt + 1
+        }/${attempts}:`,
+        result,
+      );
+    } catch (error) {
+      console.warn(
+        "[Billing] Verification attempt failed:",
+        error,
+      );
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, 2000),
+    );
+  }
+
+  return {
+    active: false,
+    status: "pending",
+  };
+}
+
 export async function startLifetimePayment() {
-  const billing = await getBillingState();
+  const billing =
+    await getBillingState();
 
   if (billing.active) {
     return {
@@ -151,19 +196,19 @@ export async function startLifetimePayment() {
       lifetime: true,
       order_id: null,
       payment_session_id: null,
-      browserOpened: false,
     };
   }
 
   const {
     data,
     error,
-  } = await supabase.functions.invoke(
-    "create-lifetime-payment",
-    {
-      body: {},
-    },
-  );
+  } =
+    await supabase.functions.invoke(
+      "create-lifetime-payment",
+      {
+        body: {},
+      },
+    );
 
   if (error) {
     throw new Error(
@@ -178,63 +223,104 @@ export async function startLifetimePayment() {
     throw new Error(data.error);
   }
 
-  const orderId = data?.order_id;
+  const orderId =
+    data?.order_id;
+
   const paymentSessionId =
     data?.payment_session_id;
 
-  if (!orderId || !paymentSessionId) {
+  if (
+    !orderId ||
+    !paymentSessionId
+  ) {
     throw new Error(
       "Cashfree did not return a valid payment session.",
     );
   }
 
-  /*
-   * Cashfree Web Checkout must run on an approved
-   * HTTPS web origin, not inside the Tauri WebView.
-   *
-   * The payment_session_id is kept in the URL fragment
-   * so it is not sent to the website server/referrer.
-   */
-  const checkoutUrl =
-    new URL(
-      "https://sinpai1.netlify.app/payment/cashfree-checkout",
-    );
-
-  checkoutUrl.hash =
-    new URLSearchParams({
-      order_id: String(orderId),
-      payment_session_id:
-        String(paymentSessionId),
-      environment: "production",
-    }).toString();
+  const environment =
+    import.meta.env
+      .VITE_CASHFREE_ENVIRONMENT ===
+    "production"
+      ? "production"
+      : "sandbox";
 
   console.log(
-    "[Billing] Opening browser checkout:",
+    "[Billing] Opening Cashfree popup:",
     orderId,
   );
 
+  const cashfree =
+    await load({
+      mode: environment,
+    });
+
+  if (!cashfree) {
+    throw new Error(
+      "Cashfree checkout could not be loaded.",
+    );
+  }
+
+  let checkoutResult: unknown = null;
+
   try {
-    await openUrl(checkoutUrl.toString());
-  } catch (error) {
+    checkoutResult =
+      await cashfree.checkout({
+        paymentSessionId,
+        redirectTarget: "_self",
+      });
+  } catch (checkoutError) {
     console.error(
-      "[Billing] Could not open browser checkout:",
-      error,
+      "[Billing] Cashfree checkout error:",
+      checkoutError,
     );
 
     throw new Error(
-      "Could not open the Cashfree payment page in your browser.",
+      checkoutError instanceof Error
+        ? checkoutError.message
+        : "Cashfree payment window could not be opened.",
     );
+  }
+
+  console.log(
+    "[Billing] Cashfree checkout finished:",
+    checkoutResult,
+  );
+
+  /*
+   * Cashfree's client result is NOT trusted.
+   * The backend checks the real payment status.
+   */
+  const verification =
+    await waitForPaymentVerification(
+      orderId,
+    );
+
+  if (verification?.active) {
+    return {
+      active: true,
+      status: "active",
+      lifetime: true,
+      order_id: orderId,
+      payment_session_id:
+        paymentSessionId,
+      checkout_result:
+        checkoutResult,
+    };
   }
 
   return {
     active: false,
-    status: "pending",
+    status:
+      verification?.status ||
+      "pending",
     lifetime: false,
-    browserOpened: true,
     order_id: orderId,
-    payment_session_id: paymentSessionId,
-    checkout_url: checkoutUrl.toString(),
+    payment_session_id:
+      paymentSessionId,
+    checkout_result:
+      checkoutResult,
     message:
-      "Cashfree checkout opened in your browser. Complete the ₹100 payment there. Snip AI will unlock automatically after verification.",
+      "Payment was not confirmed. If money was deducted, please wait a moment and try again.",
   };
 }
