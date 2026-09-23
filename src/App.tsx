@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import CaptionThemePreview from "./CaptionThemePreview";
 import "./App.css";
-import type { CSSProperties } from "react";
 
 import {
   ArrowLeft,
@@ -39,215 +39,30 @@ import {
 
 type Format = "1:1" | "16:9";
 
-type CaptionTemplate = {
-  name: string;
-  label: string;
-  animation: string;
-  fontFamily: string;
-  fontWeight: number;
-  primary: string;
-  active: string;
-};
+const REMOTION_CAPTION_THEMES = [
+  { name: "pop", label: "Pop", description: "Clean popup animation with scaling and bounce." },
+  { name: "karaoke", label: "Karaoke", description: "Smooth karaoke-style highlight sweep." },
+  { name: "hustle", label: "Hustle", description: "Energetic, fast-paced kinetic entrance." },
+  { name: "grape", label: "Grape", description: "Rounded purple/accent boxed caption style." },
+  { name: "beast", label: "Beast", description: "Bold highlighted style with high-contrast shadows." },
+  { name: "poppin", label: "Poppin", description: "Vibrant uppercase Poppins font theme." },
+  { name: "aarit", label: "Aarit", description: "Cinematic letter-by-letter zoom and gradient sweep." },
+  { name: "soft-ai", label: "Soft AI", description: "Frosted glass and blur-in caption typography." },
+  { name: "gaming-stream", label: "Gaming Stream", description: "Neon glowing gaming typography." },
+  { name: "simple-one-word", label: "Simple One Word", description: "Clean, single-word focal-point highlight." },
+  { name: "kinetic-01", label: "Kinetic 01", description: "Advanced calculated kinetic typography." },
+  { name: "kinetic-02", label: "Kinetic 02", description: "Advanced kinetic caption theme." },
+  { name: "podcast", label: "Podcast", description: "Podcast-focused caption theme." },
+] as const;
 
-type ProcessingStage = {
-  title: string;
-  description: string;
-  icon: typeof FileVideo;
-};
+type CaptionThemeName =
+  (typeof REMOTION_CAPTION_THEMES)[number]["name"];
 
-const captionTemplates: CaptionTemplate[] = [
-  {
-    name: "Reveal",
-    label: "WORDS APPEAR",
-    animation: "reveal",
-    fontFamily: "Montserrat",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#00FFFF",
-  },
-  {
-    name: "Reveal Cyan",
-    label: "MAKE IT CLEAR",
-    animation: "reveal",
-    fontFamily: "Poppins",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#00FFFF",
-  },
-  {
-    name: "Reveal Pink",
-    label: "THIS CHANGES EVERYTHING",
-    animation: "reveal",
-    fontFamily: "Inter",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#FF3DBB",
-  },
-  {
-    name: "Reveal Lime",
-    label: "LOOK AT THIS",
-    animation: "reveal",
-    fontFamily: "Impact",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#66FF00",
-  },
-  {
-    name: "Snap",
-    label: "WAIT FOR IT",
-    animation: "snap",
-    fontFamily: "Bebas Neue",
-    fontWeight: 400,
-    primary: "#FFFFFF",
-    active: "#FF2D55",
-  },
-  {
-    name: "Snap Gold",
-    label: "NO WAY",
-    animation: "snap",
-    fontFamily: "Anton",
-    fontWeight: 400,
-    primary: "#FFFFFF",
-    active: "#FFD21F",
-  },
-  {
-    name: "Snap Cyan",
-    label: "THAT'S CRAZY",
-    animation: "snap",
-    fontFamily: "Oswald",
-    fontWeight: 700,
-    primary: "#FFFFFF",
-    active: "#00E5FF",
-  },
-  {
-    name: "Snap Lime",
-    label: "HERE'S WHY",
-    animation: "snap",
-    fontFamily: "Rubik",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#7CFF00",
-  },
-  {
-    name: "Headline",
-    label: "THE BIG IDEA",
-    animation: "headline",
-    fontFamily: "Kanit",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#FFD400",
-  },
-  {
-    name: "Headline Bottom",
-    label: "THE BIG IDEA",
-    animation: "headline-bottom",
-    fontFamily: "Teko",
-    fontWeight: 700,
-    primary: "#FFFFFF",
-    active: "#A970FF",
-  },
-  {
-    name: "Headline Yellow",
-    label: "IMPORTANT",
-    animation: "headline-yellow",
-    fontFamily: "Anton SC",
-    fontWeight: 400,
-    primary: "#FFD400",
-    active: "#FF3B30",
-  },
-  {
-    name: "Headline Red",
-    label: "BREAKING THIS DOWN",
-    animation: "headline-red",
-    fontFamily: "League Spartan",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#FF3030",
-  },
-  {
-    name: "Hype",
-    label: "LET'S GO!",
-    animation: "hype",
-    fontFamily: "Cinzel Decorative",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#2F6BFF",
-  },
-  {
-    name: "Hype Blue",
-    label: "THIS IS HUGE",
-    animation: "hype-blue",
-    fontFamily: "Archivo Black",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#5A4CFF",
-  },
-  {
-    name: "Hype Green",
-    label: "WATCH THIS",
-    animation: "hype-green",
-    fontFamily: "Sora",
-    fontWeight: 800,
-    primary: "#FFFFFF",
-    active: "#43FF65",
-  },
-  {
-    name: "Hype Purple",
-    label: "YOU NEED TO SEE THIS",
-    animation: "hype-purple",
-    fontFamily: "Nunito",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#C66CFF",
-  },
-  {
-    name: "MrBeast",
-    label: "I DID NOT EXPECT THIS",
-    animation: "mrbeast",
-    fontFamily: "Prompt",
-    fontWeight: 900,
-    primary: "#FFFFFF",
-    active: "#FFD400",
-  },
-  {
-    name: "Minimal",
-    label: "clean captions",
-    animation: "minimal",
-    fontFamily: "Changa",
-    fontWeight: 800,
-    primary: "#FFFFFF",
-    active: "#FFFFFF",
-  },
-  {
-    name: "Podcast",
-    label: "THIS IS THE MOMENT",
-    animation: "podcast",
-    fontFamily: "Cabin",
-    fontWeight: 700,
-    primary: "#FFFFFF",
-    active: "#FFD400",
-  },
-  {
-    name: "Highlight",
-    label: "IMPORTANT",
-    animation: "highlight",
-    fontFamily: "Yanone Kaffeesatz",
-    fontWeight: 700,
-    primary: "#111111",
-    active: "#FFD400",
-  },
-  {
-    name: "Clean",
-    label: "simple text",
-    animation: "clean",
-    fontFamily: "Alfa Slab One",
-    fontWeight: 400,
-    primary: "#FFFFFF",
-    active: "#00D9FF",
-  },
-];
+function isCaptionThemeName(value: string): value is CaptionThemeName {
+  return REMOTION_CAPTION_THEMES.some((item) => item.name === value);
+}
 
-const processingStages: ProcessingStage[] = [
+const processingStages = [
   {
     title: "Preparing video",
     description: "Getting your video ready for processing",
@@ -573,7 +388,7 @@ function TemplatesPage({
   onUse,
 }: {
   template: string;
-  onSelect: (name: string) => void;
+  onSelect: (name: CaptionThemeName) => void;
   onUse: () => void;
 }) {
   return (
@@ -582,52 +397,60 @@ function TemplatesPage({
         <div>
           <p className="eyebrow">TEMPLATES</p>
           <h1>Caption templates.</h1>
-          <p className="subtitle">Browse every caption style in one place and set the active design for your next generation.</p>
+          <p className="subtitle">
+            Browse all Remotion caption styles and choose the active design for your next generation.
+          </p>
         </div>
-        <div className="page-header-badge"><LayoutTemplate size={15} /> {captionTemplates.length} styles</div>
+        <div className="page-header-badge">
+          <LayoutTemplate size={15} /> {REMOTION_CAPTION_THEMES.length} styles
+        </div>
       </div>
 
-      <div className="template-library-grid">
-        {captionTemplates.map((item) => (
+      <div className="remotion-template-library-grid">
+        {REMOTION_CAPTION_THEMES.map((item) => (
           <button
             key={item.name}
             type="button"
-            className={`template-library-card ${template === item.name ? "selected" : ""}`}
+            className={`remotion-template-library-card ${template === item.name ? "selected" : ""}`}
             onClick={() => onSelect(item.name)}
           >
-            <div className="template-library-preview">
-              <div
-                className={`live-caption live-caption-${item.animation}`}
-                style={{
-                  "--caption-font": item.fontFamily,
-                  "--caption-weight": item.fontWeight,
-                  "--caption-primary": item.primary,
-                  "--caption-active": item.active,
-                } as CSSProperties}
-              >
-                {item.label.split(" ").map((word, index) => (
-                  <span key={`${item.name}-library-${index}`} className="caption-word" style={{ animationDelay: `${index * 180}ms` }}>{word}</span>
-                ))}
-              </div>
+            <div className="remotion-template-library-preview">
+              <CaptionThemePreview theme={item.name} />
             </div>
-            <div className="template-library-footer">
+
+            <div className="remotion-template-library-footer">
               <div>
-                <strong>{item.name}</strong>
-                <span>{item.fontFamily}</span>
+                <strong>{item.label}</strong>
+                <span>{item.description}</span>
               </div>
-              {template === item.name && <span className="template-selected-pill"><Check size={11} /> Selected</span>}
+
+              {template === item.name && (
+                <span className="template-selected-pill">
+                  <Check size={11} /> Selected
+                </span>
+              )}
             </div>
           </button>
         ))}
       </div>
 
       <div className="template-library-action">
-        <div><strong>Selected: {template}</strong><span>This template will be used when you generate clips.</span></div>
-        <button type="button" className="generate-button" onClick={onUse}><Sparkles size={17} /> Use in Create <span className="button-arrow">→</span></button>
+        <div>
+          <strong>
+            Selected:{" "}
+            {REMOTION_CAPTION_THEMES.find((item) => item.name === template)?.label ?? template}
+          </strong>
+          <span>This exact Remotion theme will be used when you generate clips.</span>
+        </div>
+
+        <button type="button" className="generate-button" onClick={onUse}>
+          <Sparkles size={17} /> Use in Create <span className="button-arrow">→</span>
+        </button>
       </div>
     </section>
   );
 }
+
 
 function HistoryPage({
   history,
@@ -683,8 +506,6 @@ function SettingsPage({
   setDefaultFormat,
   defaultClipCount,
   setDefaultClipCount,
-  defaultDifferentCaptions,
-  setDefaultDifferentCaptions,
   welcomeTitle,
   setWelcomeTitle,
   welcomeSubtitle,
@@ -695,8 +516,6 @@ function SettingsPage({
   setDefaultFormat: (value: Format) => void;
   defaultClipCount: number;
   setDefaultClipCount: (value: number) => void;
-  defaultDifferentCaptions: boolean;
-  setDefaultDifferentCaptions: (value: boolean) => void;
   welcomeTitle: string;
   setWelcomeTitle: (value: string) => void;
   welcomeSubtitle: string;
@@ -726,8 +545,13 @@ function SettingsPage({
           <input className="settings-range" type="range" min="1" max="10" value={defaultClipCount} onChange={(event) => setDefaultClipCount(Number(event.target.value))} />
 
           <div className="settings-switch-row">
-            <div><strong>Different caption on every clip</strong><span>Keep this option enabled by default on Create.</span></div>
-            <button type="button" className={`toggle ${defaultDifferentCaptions ? "on" : ""}`} onClick={() => setDefaultDifferentCaptions(!defaultDifferentCaptions)}><span /></button>
+            <div className="settings-info-note">
+              <LayoutTemplate size={16} />
+              <div>
+                <strong>Remotion caption themes</strong>
+                <span>The selected caption theme is used consistently for generated clips.</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -816,8 +640,8 @@ function App() {
       return "1:1";
     }
   });
-  const [template, setTemplate] = useState("Reveal");
-  const [differentCaptions, setDifferentCaptions] = useState(() => {
+  const [template, setTemplate] = useState<CaptionThemeName>("pop");
+  const [differentCaptions] = useState(() => {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
       return raw ? JSON.parse(raw).defaultDifferentCaptions !== false : true;
@@ -904,15 +728,6 @@ function App() {
       return 5;
     }
   });
-  const [defaultDifferentCaptions, setDefaultDifferentCaptions] = useState(() => {
-    try {
-      const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-      return raw ? JSON.parse(raw).defaultDifferentCaptions !== false : true;
-    } catch {
-      return true;
-    }
-  });
-
   const [welcomeTitle, setWelcomeTitle] = useState(() => {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -935,8 +750,6 @@ function App() {
 
   const [showWelcome, setShowWelcome] = useState(true);
 
-  const templateScrollRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     try {
       window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyRecords.slice(0, 30)));
@@ -950,19 +763,18 @@ function App() {
       window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
         defaultFormat,
         defaultClipCount,
-        defaultDifferentCaptions,
         welcomeTitle,
         welcomeSubtitle,
       }));
     } catch (error) {
       console.warn("Could not save Snip AI settings:", error);
     }
-  }, [defaultFormat, defaultClipCount, defaultDifferentCaptions, welcomeTitle, welcomeSubtitle]);
+  }, [defaultFormat, defaultClipCount, welcomeTitle, welcomeSubtitle]);
 
   const selectedTemplate =
-    captionTemplates.find(
+    REMOTION_CAPTION_THEMES.find(
       (item) => item.name === template,
-    ) ?? captionTemplates[0];
+    ) ?? REMOTION_CAPTION_THEMES[0];
 
   // ----------------------------------------------------------
   // BILLING HELPERS
@@ -1039,19 +851,16 @@ function App() {
     setPlayingClip(null);
   };
 
-  const scrollTemplates = (delta: number) => {
-    templateScrollRef.current?.scrollBy({
-      left: delta,
-      behavior: "smooth",
-    });
-  };
-
   const openHistoryRecord = (record: GenerationRecord) => {
     if (!record.paths.length) return;
     setOutputPaths(record.paths);
     setVideoName(record.videoName);
     setFormat(record.format);
-    setTemplate(record.template);
+    setTemplate(
+      isCaptionThemeName(record.template)
+        ? record.template
+        : "pop",
+    );
     setWorkspacePage("create");
     setShowGallery(true);
     setProcessingComplete(false);
@@ -1217,7 +1026,6 @@ function App() {
     setIsDownloading(false);
     setFormat(defaultFormat);
     setRequestedClips(defaultClipCount);
-    setDifferentCaptions(defaultDifferentCaptions);
     setWorkspacePage("create");
     setVideoName("");
     setVideoPath("");
@@ -2293,149 +2101,60 @@ function App() {
                   </div>
                 </div>
 
-                <div className="option-card caption-card">
+                <div className="option-card caption-card remotion-caption-card">
                   <div className="option-heading">
                     <div>
-                      <span className="option-title">
-                        Caption template
-                      </span>
-
+                      <span className="option-title">Caption template</span>
                       <span className="option-description">
-                        Choose a predefined visual
-                        style
+                        Choose one of the 13 Remotion caption themes
                       </span>
                     </div>
 
                     <div className="selected-template-name">
-                      {selectedTemplate.name}
+                      {selectedTemplate.label}
                     </div>
                   </div>
 
-                  <div className="template-carousel-shell">
-                    <button type="button" className="template-scroll-button left" onClick={() => scrollTemplates(-330)} aria-label="Previous caption templates">
-                      <ArrowLeft size={14} />
-                    </button>
+                  <div className="remotion-create-template-carousel">
+                    <div className="remotion-create-template-track">
+                      {REMOTION_CAPTION_THEMES.map((item) => (
+                        <button
+                          key={item.name}
+                          type="button"
+                          className={`remotion-create-template-card ${template === item.name ? "selected" : ""}`}
+                          onClick={() => setTemplate(item.name as CaptionThemeName)}
+                        >
+                          <div className="remotion-create-template-preview">
+                            <CaptionThemePreview theme={item.name} />
+                          </div>
 
-                    <div
-                      className="template-carousel"
-                      ref={templateScrollRef}
-                      onWheel={(event) => {
-                        if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
-                          event.preventDefault();
-                          event.currentTarget.scrollLeft += event.deltaY;
-                        }
-                      }}
-                    >
-                      <div className="template-track">
-                      {captionTemplates.map(
-                        (item) => (
-                          <button
-                            key={item.name}
-                            className={`template-card ${
-                              template ===
-                              item.name
-                                ? "selected"
-                                : ""
-                            }`}
-                            onClick={() =>
-                              setTemplate(
-                                item.name,
-                              )
-                            }
-                          >
-                            <div className="template-video-preview">
-                              <div
-                                className={`live-caption live-caption-${item.animation}`}
-                                style={
-                                  {
-                                    "--caption-font": item.fontFamily,
-                                    "--caption-weight": item.fontWeight,
-                                    "--caption-primary": item.primary,
-                                    "--caption-active": item.active,
-                                  } as CSSProperties
-                                }
-                              >
-                                {item.label.split(" ").map((word, wordIndex) => (
-                                  <span
-                                    key={`${item.name}-${wordIndex}`}
-                                    className="caption-word"
-                                    style={{ animationDelay: `${wordIndex * 260}ms` }}
-                                  >
-                                    {word}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="template-card-footer">
-                              <span className="template-name">
-                                {item.name}
+                          <div className="remotion-create-template-footer">
+                            <span>{item.label}</span>
+                            {template === item.name && (
+                              <span className="template-check">
+                                <Check size={10} />
                               </span>
-                              <span className="template-font">
-                                {item.fontFamily}
-                              </span>
-
-                              {template ===
-                                item.name && (
-                                <span className="template-check">
-                                  <Check
-                                    size={10}
-                                  />
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        ),
-                      )}
-                      </div>
+                            )}
+                          </div>
+                        </button>
+                      ))}
                     </div>
-
-                    <button type="button" className="template-scroll-button right" onClick={() => scrollTemplates(330)} aria-label="Next caption templates">
-                      <ArrowLeft size={14} style={{ transform: "rotate(180deg)" }} />
-                    </button>
                   </div>
 
                   <div className="template-scroll-hint">
-                    ← Scroll to explore styles →
+                    ← Scroll to explore all 13 Remotion styles →
+                  </div>
+
+                  <div className="caption-theme-selected-note">
+                    <LayoutTemplate size={17} />
+                    <div>
+                      <strong>{selectedTemplate.label} selected</strong>
+                      <span>
+                        The exact selected theme will be rendered on every generated clip.
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              <div className="caption-setting">
-                <div className="setting-icon">
-                  <LayoutTemplate
-                    size={18}
-                  />
-                </div>
-
-                <div className="setting-copy">
-                  <strong>
-                    Different caption on every
-                    clip
-                  </strong>
-
-                  <span>
-                    Let Snip AI create different
-                    caption text while keeping
-                    your selected design.
-                  </span>
-                </div>
-
-                <button
-                  className={`toggle ${
-                    differentCaptions
-                      ? "on"
-                      : ""
-                  }`}
-                  onClick={() =>
-                    setDifferentCaptions(
-                      !differentCaptions,
-                    )
-                  }
-                  aria-label="Toggle different captions"
-                >
-                  <span />
-                </button>
               </div>
 
               {errorMessage && (
@@ -2562,8 +2281,6 @@ function App() {
             setDefaultFormat={setDefaultFormat}
             defaultClipCount={defaultClipCount}
             setDefaultClipCount={setDefaultClipCount}
-            defaultDifferentCaptions={defaultDifferentCaptions}
-            setDefaultDifferentCaptions={setDefaultDifferentCaptions}
             welcomeTitle={welcomeTitle}
             setWelcomeTitle={setWelcomeTitle}
             welcomeSubtitle={welcomeSubtitle}
@@ -2571,7 +2288,6 @@ function App() {
             onReset={() => {
               setDefaultFormat("1:1");
               setDefaultClipCount(5);
-              setDefaultDifferentCaptions(true);
               setWelcomeTitle("Welcome master");
               setWelcomeSubtitle("Aaj ka kya plan hai?");
             }}

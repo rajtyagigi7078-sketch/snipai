@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import json
 import os
 import subprocess
@@ -10,47 +8,68 @@ from faster_whisper import WhisperModel
 
 
 # ============================================================
-# SNIP AI — PRODUCTION WHISPER TRANSCRIBER
-# ============================================================
-#
-# LOCKED PRODUCTION SETTINGS
-#
-# Library      : faster-whisper
-# Model        : base
-# Device       : CPU
-# Compute      : int8
-# CPU threads  : 8
-# Beam size    : 1
-# Best of      : 1
-# VAD          : ON
-# Word timings : OFF
-#
-# Tested on 71.5 minute video:
-# Base + int8 = ~232.62 seconds
-#
-# int8_float32 benchmark = ~243.92 seconds
-# Therefore production uses int8.
+# CONFIG
 # ============================================================
 
-MODEL_SIZE = "base"
+MODEL_SIZE = os.environ.get("SNIP_AI_WHISPER_MODEL", "base")
+COMPUTE_TYPE = os.environ.get("SNIP_AI_WHISPER_COMPUTE", "int8")
 
-CPU_THREADS = 8
+CPU_THREADS = int(
+    os.environ.get("SNIP_AI_WHISPER_CPU_THREADS", "8")
+)
 
-COMPUTE_TYPE = "int8"
+BEAM_SIZE = int(
+    os.environ.get("SNIP_AI_WHISPER_BEAM_SIZE", "5")
+)
 
-BEAM_SIZE = 1
-BEST_OF = 1
+BEST_OF = int(
+    os.environ.get("SNIP_AI_WHISPER_BEST_OF", "5")
+)
+
+WHISPER_VERSION = "word-timestamps-v1"
 
 
 # ============================================================
-# VIDEO DURATION
+# PATHS
 # ============================================================
 
-def get_video_duration(video: Path) -> float:
+BASE_DIR = Path(__file__).resolve().parent
+
+
+def resolve_ffprobe():
+    configured = os.environ.get("SNIP_AI_FFPROBE")
+
+    if configured:
+        candidate = Path(configured).expanduser()
+
+        if candidate.is_file():
+            return str(candidate)
+
+    found = shutil_which("ffprobe")
+
+    if found:
+        return found
+
+    return "ffprobe"
+
+
+def shutil_which(name):
+    import shutil
+
+    return shutil.which(name)
+
+
+# ============================================================
+# VIDEO INFO
+# ============================================================
+
+def get_video_duration(video):
+    ffprobe = resolve_ffprobe()
+
     try:
         result = subprocess.run(
             [
-                "ffprobe",
+                ffprobe,
                 "-v",
                 "error",
                 "-show_entries",
@@ -71,6 +90,25 @@ def get_video_duration(video: Path) -> float:
 
 
 # ============================================================
+# CACHE VALIDATION
+# ============================================================
+
+def transcript_has_word_timestamps(data):
+    segments = data.get("segments", [])
+
+    if not segments:
+        return False
+
+    for segment in segments:
+        words = segment.get("words")
+
+        if isinstance(words, list) and words:
+            return True
+
+    return False
+
+
+# ============================================================
 # TRANSCRIPTION
 # ============================================================
 
@@ -85,7 +123,7 @@ def transcribe(video_path: str):
     output_path = video.with_suffix(".transcript.json")
 
     # --------------------------------------------------------
-    # REUSE EXISTING TRANSCRIPT
+    # REUSE EXISTING TRANSCRIPT ONLY IF IT HAS WORD TIMING
     # --------------------------------------------------------
 
     if output_path.exists():
@@ -96,7 +134,10 @@ def transcribe(video_path: str):
 
             existing_segments = existing.get("segments", [])
 
-            if existing_segments:
+            if (
+                existing.get("whisper_version") == WHISPER_VERSION
+                and transcript_has_word_timestamps(existing)
+            ):
 
                 print()
                 print("=" * 70)
@@ -105,10 +146,23 @@ def transcribe(video_path: str):
 
                 print(f"Existing transcript : {output_path}")
                 print(f"Segments            : {len(existing_segments)}")
-                print("Status              : REUSING EXISTING TRANSCRIPT")
+                print("Word timing         : ON")
+                print("Status              : REUSING VALID TRANSCRIPT")
+
                 print("=" * 70)
 
                 return
+
+            print()
+            print("=" * 70)
+            print("SNIP AI — TRANSCRIPT CACHE")
+            print("=" * 70)
+
+            print(f"Existing transcript : {output_path}")
+            print("Status              : OLD TRANSCRIPT DETECTED")
+            print("Action              : RE-TRANSCRIBING WITH WORD TIMING")
+
+            print("=" * 70)
 
         except Exception:
             pass
@@ -134,7 +188,7 @@ def transcribe(video_path: str):
     print(f"Beam size    : {BEAM_SIZE}")
     print(f"Best of      : {BEST_OF}")
     print("VAD          : ON")
-    print("Word timing  : OFF")
+    print("Word timing  : ON")
     print("Previous text: OFF")
     print("=" * 70)
 
@@ -161,17 +215,27 @@ def transcribe(video_path: str):
     # TRANSCRIBE
     # --------------------------------------------------------
 
+    vad_filter = os.environ.get(
+        "SNIP_AI_VAD_FILTER",
+        "true",
+    ).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
     segments, info = model.transcribe(
         str(video),
 
         beam_size=BEAM_SIZE,
         best_of=BEST_OF,
 
-        vad_filter=True,
+        vad_filter=vad_filter,
 
         condition_on_previous_text=False,
 
-        word_timestamps=False,
+        word_timestamps=True,
 
         temperature=0.0,
     )
@@ -185,14 +249,72 @@ def transcribe(video_path: str):
         if not text:
             continue
 
+        words = []
+
+        for word in getattr(segment, "words", []) or []:
+
+            word_text = str(
+                getattr(word, "word", "")
+            ).strip()
+
+            if not word_text:
+                continue
+
+            try:
+                word_start = float(
+                    getattr(word, "start")
+                )
+
+                word_end = float(
+                    getattr(word, "end")
+                )
+
+            except (TypeError, ValueError):
+                continue
+
+            if word_end <= word_start:
+                continue
+
+            words.append(
+                {
+                    "text": word_text,
+                    "start": round(word_start, 3),
+                    "end": round(word_end, 3),
+                }
+            )
+
         result_segments.append(
             {
                 "id": index,
-                "start": round(float(segment.start), 2),
-                "end": round(float(segment.end), 2),
+                "start": round(float(segment.start), 3),
+                "end": round(float(segment.end), 3),
                 "text": text,
+                "words": words,
             }
         )
+
+    # --------------------------------------------------------
+    # VALIDATE WORD TIMING
+    # --------------------------------------------------------
+
+    total_words = sum(
+        len(segment.get("words", []))
+        for segment in result_segments
+    )
+
+    if total_words == 0:
+
+        print()
+        print("=" * 70)
+        print("WHISPER ERROR")
+        print("=" * 70)
+
+        print("Word timestamps were requested,")
+        print("but Whisper returned zero words.")
+
+        print("=" * 70)
+
+        sys.exit(1)
 
     # --------------------------------------------------------
     # SAVE RESULT
@@ -203,10 +325,13 @@ def transcribe(video_path: str):
         "language": info.language,
         "language_probability": info.language_probability,
         "duration": round(duration, 3),
+        "whisper_version": WHISPER_VERSION,
+        "word_timestamps": True,
         "segments": result_segments,
     }
 
     with open(output_path, "w", encoding="utf-8") as f:
+
         json.dump(
             result,
             f,
@@ -225,7 +350,9 @@ def transcribe(video_path: str):
 
     print(f"Language       : {info.language}")
     print(f"Segments       : {len(result_segments)}")
+    print(f"Words          : {total_words}")
     print(f"Duration       : {duration:.2f}s")
+    print("Word timing    : ON")
     print(f"Saved          : {output_path}")
 
     print("=" * 70)

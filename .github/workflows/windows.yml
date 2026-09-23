@@ -16,8 +16,16 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # ------------------------------------------------------
+      # CHECKOUT
+      # ------------------------------------------------------
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ------------------------------------------------------
+      # NODE
+      # ------------------------------------------------------
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -25,16 +33,24 @@ jobs:
           node-version: 22
           cache: npm
 
+      # ------------------------------------------------------
+      # PYTHON
+      # ------------------------------------------------------
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # ------------------------------------------------------
+      # FRONTEND
+      # ------------------------------------------------------
+
       - name: Install frontend dependencies
         run: npm ci
 
       # ------------------------------------------------------
-      # WINDOWS RUNTIME
+      # WINDOWS RUNTIME DIRECTORIES
       # ------------------------------------------------------
 
       - name: Prepare Windows runtime
@@ -49,7 +65,62 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$runtime\pipeline" | Out-Null
           New-Item -ItemType Directory -Force -Path "$runtime\ffmpeg" | Out-Null
           New-Item -ItemType Directory -Force -Path "$runtime\whisper-model" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$runtime\node" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$runtime\caption-renderer" | Out-Null
           New-Item -ItemType Directory -Force -Path $python | Out-Null
+
+          Write-Host "Windows runtime directories ready."
+
+          Write-Host ""
+          Write-Host "Node version:"
+          node --version
+
+          Write-Host ""
+          Write-Host "npm version:"
+          npm --version
+
+      # ------------------------------------------------------
+      # PORTABLE NODE
+      # ------------------------------------------------------
+
+      - name: Bundle portable Node runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $nodePath = (Get-Command node).Source
+
+          if (-not (Test-Path $nodePath)) {
+            throw "Node executable was not found."
+          }
+
+          Write-Host "Build Node executable:"
+          Write-Host $nodePath
+
+          Copy-Item `
+            $nodePath `
+            "windows-runtime/node/node.exe" `
+            -Force
+
+          if (-not (Test-Path "windows-runtime/node/node.exe")) {
+            throw "Portable Node executable was not copied."
+          }
+
+          Write-Host ""
+          Write-Host "Portable Node:"
+          Get-Item "windows-runtime/node/node.exe"
+
+      # ------------------------------------------------------
+      # PYTHON RUNTIME
+      # ------------------------------------------------------
+
+      - name: Prepare Windows Python runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $runtime = "windows-runtime"
+          $python = "$runtime\python"
 
           Write-Host "Creating Windows Python virtual environment..."
 
@@ -74,7 +145,6 @@ jobs:
 
           $pipeline = "windows-runtime/pipeline"
 
-          # All pipeline files required by the portable runtime.
           $required = @(
             "$pipeline/pipeline_runner.py",
             "$pipeline/story_event_map.py",
@@ -89,8 +159,6 @@ jobs:
             }
           }
 
-          # Always use the current production Whisper script
-          # from the repository root.
           Copy-Item `
             "whisper_transcribe.py" `
             "$pipeline/whisper_transcribe.py" `
@@ -98,6 +166,145 @@ jobs:
 
           Write-Host "Bundled pipeline files:"
           Get-ChildItem $pipeline
+
+      # ------------------------------------------------------
+      # REMOTION CAPTION RENDERER
+      # ------------------------------------------------------
+
+      - name: Prepare Remotion caption renderer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $renderer = "windows-runtime/caption-renderer"
+          $themes = "windows-runtime/caption-renderer/remotion-captions-themes"
+
+          New-Item -ItemType Directory -Force -Path $renderer | Out-Null
+          New-Item -ItemType Directory -Force -Path $themes | Out-Null
+
+          # Copy renderer source.
+          Copy-Item `
+            "snip-caption-renderer/src" `
+            "$renderer/src" `
+            -Recurse `
+            -Force
+
+          # Copy renderer package files.
+          Copy-Item `
+            "snip-caption-renderer/package.json" `
+            "$renderer/package.json" `
+            -Force
+
+          # Copy the actual caption theme source package.
+          Copy-Item `
+            "remotion-captions-themes/src" `
+            "$themes/src" `
+            -Recurse `
+            -Force
+
+          Copy-Item `
+            "remotion-captions-themes/package.json" `
+            "$themes/package.json" `
+            -Force
+
+          Write-Host ""
+          Write-Host "Renderer source:"
+          Get-ChildItem "$renderer/src"
+
+          Write-Host ""
+          Write-Host "Theme source:"
+          Get-ChildItem "$themes/src" -Recurse
+
+      # ------------------------------------------------------
+      # INSTALL REMOTION RUNTIME
+      # ------------------------------------------------------
+
+      - name: Install Windows Remotion dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $renderer = Resolve-Path "windows-runtime/caption-renderer"
+          $package = Join-Path $renderer "package.json"
+
+          $data = Get-Content $package -Raw | ConvertFrom-Json
+
+          if (-not $data.dependencies) {
+            $data | Add-Member `
+              -MemberType NoteProperty `
+              -Name dependencies `
+              -Value ([pscustomobject]@{})
+          }
+
+          # Replace the Linux development-time local path
+          # with the bundled Windows runtime theme package.
+          $data.dependencies."remotion-captions-themes" = "file:./remotion-captions-themes"
+
+          $data | ConvertTo-Json -Depth 20 | Set-Content $package
+
+          Write-Host ""
+          Write-Host "Renderer package:"
+          Get-Content $package
+
+          Push-Location $renderer
+
+          Write-Host ""
+          Write-Host "Installing Windows Remotion dependencies..."
+
+          npm install --omit=dev
+
+          Write-Host ""
+          Write-Host "Installed renderer dependencies:"
+          npm ls --depth=0
+
+          Pop-Location
+
+      # ------------------------------------------------------
+      # VERIFY REMOTION RUNTIME
+      # ------------------------------------------------------
+
+      - name: Verify Remotion runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $node = "windows-runtime/node/node.exe"
+          $renderer = "windows-runtime/caption-renderer"
+
+          $checks = @(
+            $node,
+            "$renderer/src/render.ts",
+            "$renderer/src/CaptionComposition.tsx",
+            "$renderer/src/Root.tsx",
+            "$renderer/package.json",
+            "$renderer/node_modules/tsx/dist/cli.mjs",
+            "$renderer/node_modules/remotion/package.json",
+            "$renderer/node_modules/@remotion/renderer/package.json",
+            "$renderer/node_modules/@remotion/bundler/package.json",
+            "$renderer/node_modules/remotion-captions-themes/src/registry.ts"
+          )
+
+          foreach ($file in $checks) {
+            if (-not (Test-Path $file)) {
+              throw "Remotion runtime verification failed. Missing: $file"
+            }
+          }
+
+          Write-Host ""
+          Write-Host "Node:"
+          & $node --version
+
+          Write-Host ""
+          Write-Host "tsx:"
+          & $node "$renderer/node_modules/tsx/dist/cli.mjs" --version
+
+          Write-Host ""
+          Write-Host "Remotion runtime verified."
+
+          Write-Host ""
+          Write-Host "Renderer size:"
+          Get-ChildItem $renderer -Recurse -File |
+            Measure-Object Length -Sum
 
       # ------------------------------------------------------
       # FFMPEG
@@ -248,8 +455,6 @@ jobs:
             "windows-runtime/download_model.py" `
             -Force
 
-          # The temporary Hugging Face cache is no longer needed
-          # because the actual model has been copied to /model.
           if (Test-Path "windows-runtime/whisper-model/cache") {
             Remove-Item `
               "windows-runtime/whisper-model/cache" `
@@ -264,7 +469,7 @@ jobs:
             Select-Object FullName
 
       # ------------------------------------------------------
-      # VERIFY RUNTIME
+      # VERIFY COMPLETE WINDOWS RUNTIME
       # ------------------------------------------------------
 
       - name: Verify Windows runtime
@@ -277,6 +482,7 @@ jobs:
 
           $checks = @(
             $python,
+            "windows-runtime/node/node.exe",
             "windows-runtime/ffmpeg/ffmpeg.exe",
             "windows-runtime/ffmpeg/ffprobe.exe",
             "windows-runtime/pipeline/pipeline_runner.py",
@@ -285,7 +491,12 @@ jobs:
             "windows-runtime/pipeline/render_clips_simple.py",
             "windows-runtime/pipeline/whisper_transcribe.py",
             "windows-runtime/whisper-model/model/config.json",
-            "windows-runtime/whisper-model/model/model.bin"
+            "windows-runtime/whisper-model/model/model.bin",
+            "windows-runtime/caption-renderer/src/render.ts",
+            "windows-runtime/caption-renderer/node_modules/tsx/dist/cli.mjs",
+            "windows-runtime/caption-renderer/node_modules/remotion/package.json",
+            "windows-runtime/caption-renderer/node_modules/@remotion/renderer/package.json",
+            "windows-runtime/caption-renderer/node_modules/remotion-captions-themes/src/registry.ts"
           )
 
           foreach ($file in $checks) {
@@ -300,15 +511,22 @@ jobs:
 
           & $python -c "from faster_whisper import WhisperModel; print('WhisperModel: OK')"
 
+          & "windows-runtime/node/node.exe" `
+            "windows-runtime/caption-renderer/node_modules/tsx/dist/cli.mjs" `
+            --version
+
           Write-Host ""
           Write-Host "===== WINDOWS RUNTIME READY ====="
           Write-Host ""
 
-          Get-ChildItem `
+          $runtimeSize = Get-ChildItem `
             windows-runtime `
             -Recurse `
             -File |
             Measure-Object Length -Sum
+
+          Write-Host "Runtime bytes: $($runtimeSize.Sum)"
+          Write-Host "Runtime MB: $([math]::Round($runtimeSize.Sum / 1MB, 2))"
 
       # ------------------------------------------------------
       # BUILD

@@ -375,7 +375,7 @@ def transcribe(
     )
 
     print(
-        "Word timing  : OFF"
+        "Word timing  : ON"
     )
 
     print(
@@ -448,6 +448,16 @@ def transcribe(
     # TRANSCRIBE
     # --------------------------------------------------------
 
+    vad_filter = os.environ.get(
+        "SNIP_AI_VAD_FILTER",
+        "true",
+    ).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
     segments, info = model.transcribe(
         str(video),
 
@@ -455,11 +465,11 @@ def transcribe(
 
         best_of=BEST_OF,
 
-        vad_filter=True,
+        vad_filter=vad_filter,
 
         condition_on_previous_text=False,
 
-        word_timestamps=False,
+        word_timestamps=True,
 
         temperature=0.0,
     )
@@ -475,6 +485,38 @@ def transcribe(
         if not text:
 
             continue
+
+        words = []
+
+        for word in (segment.words or []):
+
+            word_text = word.word.strip()
+
+            if not word_text:
+
+                continue
+
+            if word.start is None or word.end is None:
+
+                continue
+
+            words.append(
+                {
+                    "text": word_text,
+                    "start": round(
+                        float(
+                            word.start
+                        ),
+                        3,
+                    ),
+                    "end": round(
+                        float(
+                            word.end
+                        ),
+                        3,
+                    ),
+                }
+            )
 
         result_segments.append(
             {
@@ -492,6 +534,7 @@ def transcribe(
                     2,
                 ),
                 "text": text,
+                "words": words,
             }
         )
 

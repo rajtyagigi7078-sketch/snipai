@@ -37,6 +37,23 @@ import time
 # PROJECT / RUNTIME PATHS
 # ============================================================
 
+REMOTION_THEMES = {
+    "pop",
+    "karaoke",
+    "hustle",
+    "grape",
+    "beast",
+    "poppin",
+    "aarit",
+    "soft-ai",
+    "gaming-stream",
+    "simple-one-word",
+    "kinetic-01",
+    "kinetic-02",
+    "podcast",
+}
+
+
 BASE_DIR = Path(
     os.environ.get(
         "SNIP_AI_PROJECT_ROOT",
@@ -77,6 +94,7 @@ if BUNDLED_RUNTIME:
     )
 
     if os.name == "nt":
+        # Windows production runtime uses the bundled Python.
         BUNDLED_PYTHON = (
             RUNTIME_ROOT
             / "python"
@@ -84,12 +102,27 @@ if BUNDLED_RUNTIME:
             / "python.exe"
         )
     else:
-        BUNDLED_PYTHON = (
-            RUNTIME_ROOT
-            / "python"
-            / "bin"
-            / "python"
-        )
+        # Linux development uses the exact Python environment
+        # supplied by Tauri through SNIP_AI_PYTHON.
+        supplied_python = os.environ.get("SNIP_AI_PYTHON")
+
+        if supplied_python:
+            BUNDLED_PYTHON = (
+                Path(supplied_python)
+                .expanduser()
+                .resolve()
+            )
+        else:
+            # Fallback for direct pipeline execution from the
+            # Snip AI project.
+            project_root = Path(__file__).resolve().parents[1]
+
+            BUNDLED_PYTHON = (
+                project_root
+                / ".whisper-venv"
+                / "bin"
+                / "python"
+            )
 
     BUNDLED_FFMPEG = (
         RUNTIME_ROOT
@@ -138,23 +171,24 @@ CLIPPER_DIR = (
 )
 
 
-if BUNDLED_PYTHON is not None:
+if os.name == "nt":
+    # Windows production ALWAYS uses the bundled runtime.
     WHISPER_PYTHON = BUNDLED_PYTHON
 
 else:
-    legacy_python = (
-        CLIPPER_DIR
-        / ".whisper-venv"
-        / "bin"
-        / "python"
-    )
+    # Linux development ALWAYS reuses the exact Python
+    # interpreter that launched pipeline_runner.py.
+    #
+    # This is intentionally sys.executable.
+    #
+    # Do NOT resolve .whisper-venv/bin/python because on this
+    # Linux installation it is a symlink to /usr/bin/python3.14.
+    #
+    # sys.executable preserves the active virtual environment
+    # and therefore preserves faster-whisper and all other
+    # installed packages.
+    WHISPER_PYTHON = Path(sys.executable)
 
-    if legacy_python.exists():
-        WHISPER_PYTHON = legacy_python
-    else:
-        WHISPER_PYTHON = Path(
-            sys.executable
-        )
 
 
 if BUNDLED_RUNTIME:
@@ -975,7 +1009,7 @@ def run_generation_selector(
 
 def run_renderer(
     framing,
-    caption_template="Bold Pop",
+    caption_template="pop",
     different_captions=False,
 ):
 
@@ -989,34 +1023,26 @@ def run_renderer(
             "Allowed: 1:1 or 16:9"
         )
 
-    allowed_templates = {
-        "Reveal",
-        "Reveal Cyan",
-        "Reveal Pink",
-        "Reveal Lime",
-        "Snap",
-        "Snap Gold",
-        "Snap Cyan",
-        "Snap Lime",
-        "Headline",
-        "Headline Bottom",
-        "Headline Yellow",
-        "Headline Red",
-        "Hype",
-        "Hype Blue",
-        "Hype Green",
-        "Hype Purple",
-        "MrBeast",
-        "Minimal",
-        "Podcast",
-        "Highlight",
-        "Clean",
+    allowed_caption_templates = {
+        "pop",
+        "karaoke",
+        "hustle",
+        "grape",
+        "beast",
+        "poppin",
+        "aarit",
+        "soft-ai",
+        "gaming-stream",
+        "simple-one-word",
+        "kinetic-01",
+        "kinetic-02",
+        "podcast",
     }
 
-    if caption_template not in allowed_templates:
+    if caption_template not in REMOTION_THEMES:
 
         fail(
-            f"Invalid caption template: "
+            f"Invalid Remotion caption theme: "
             f"{caption_template}"
         )
 
@@ -1143,7 +1169,7 @@ def main():
     caption_template = (
         sys.argv[4]
         if len(sys.argv) >= 5
-        else "Bold Pop"
+        else "pop"
     )
 
     different_captions = (
@@ -1154,27 +1180,19 @@ def main():
     )
 
     allowed_caption_templates = {
-        "Reveal",
-        "Reveal Cyan",
-        "Reveal Pink",
-        "Reveal Lime",
-        "Snap",
-        "Snap Gold",
-        "Snap Cyan",
-        "Snap Lime",
-        "Headline",
-        "Headline Bottom",
-        "Headline Yellow",
-        "Headline Red",
-        "Hype",
-        "Hype Blue",
-        "Hype Green",
-        "Hype Purple",
-        "MrBeast",
-        "Minimal",
-        "Podcast",
-        "Highlight",
-        "Clean",
+        "pop",
+        "karaoke",
+        "hustle",
+        "grape",
+        "beast",
+        "poppin",
+        "aarit",
+        "soft-ai",
+        "gaming-stream",
+        "simple-one-word",
+        "kinetic-01",
+        "kinetic-02",
+        "podcast",
     }
 
     if caption_template not in allowed_caption_templates:

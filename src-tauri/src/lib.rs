@@ -110,30 +110,38 @@ fn resolve_project_root() -> Result<PathBuf, String> {
 fn resolve_python(
     app: &tauri::AppHandle,
 ) -> Result<PathBuf, String> {
-    if let Ok(runtime_root) = resolve_runtime_root(app) {
-        let python_dir = runtime_root.join("python");
+    let project_root = resolve_project_root()?;
 
-        let candidates = if cfg!(target_os = "windows") {
-            vec![
+    // --------------------------------------------------------
+    // WINDOWS
+    // --------------------------------------------------------
+    //
+    // Windows uses the bundled portable Python runtime.
+    //
+    if cfg!(target_os = "windows") {
+        if let Ok(runtime_root) = resolve_runtime_root(app) {
+            let python_dir = runtime_root.join("python");
+
+            let candidates = [
                 python_dir.join("Scripts").join("python.exe"),
                 python_dir.join("Scripts").join("python"),
-            ]
-        } else {
-            vec![
-                python_dir.join("bin").join("python"),
-                python_dir.join("bin").join("python3"),
-            ]
-        };
+            ];
 
-        for candidate in candidates {
-            if candidate.is_file() {
-                return Ok(candidate);
+            for candidate in candidates {
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
             }
         }
     }
 
-    let project_root = resolve_project_root()?;
-
+    // --------------------------------------------------------
+    // DEVELOPMENT / LINUX / MACOS
+    // --------------------------------------------------------
+    //
+    // Linux development uses the project's Whisper virtual
+    // environment instead of the Windows runtime directory.
+    //
     let venv = project_root
         .join("clipper")
         .join(".whisper-venv");
@@ -157,8 +165,11 @@ fn resolve_python(
     }
 
     Err(format!(
-        "Snip AI Python environment was not found.\n\
-Expected bundled runtime or development environment."
+        "Whisper Python environment not found.
+\
+Expected development environment:
+{}",
+        venv.display()
     ))
 }
 
@@ -578,6 +589,31 @@ fn download_youtube(
     Ok(downloaded_path.to_string_lossy().to_string())
 }
 
+
+fn resolve_caption_renderer(
+    app: &tauri::AppHandle,
+) -> Result<PathBuf, String> {
+    if let Ok(runtime_root) = resolve_runtime_root(app) {
+        let bundled = runtime_root.join("caption-renderer");
+
+        if bundled.join("src").join("render.ts").is_file() {
+            return Ok(bundled);
+        }
+    }
+
+    let project_root = resolve_project_root()?;
+    let development = project_root.join("snip-caption-renderer");
+
+    if development.join("src").join("render.ts").is_file() {
+        return Ok(development);
+    }
+
+    Err(format!(
+        "Remotion caption renderer was not found.\\n\\nExpected development path:\\n{}",
+        development.display()
+    ))
+}
+
 // ------------------------------------------------------------
 // REAL SNIP AI PIPELINE
 // ------------------------------------------------------------
@@ -625,27 +661,19 @@ fn create_clips(
     }
 
     let allowed_caption_templates = [
-        "Reveal",
-        "Reveal Cyan",
-        "Reveal Pink",
-        "Reveal Lime",
-        "Snap",
-        "Snap Gold",
-        "Snap Cyan",
-        "Snap Lime",
-        "Headline",
-        "Headline Bottom",
-        "Headline Yellow",
-        "Headline Red",
-        "Hype",
-        "Hype Blue",
-        "Hype Green",
-        "Hype Purple",
-        "MrBeast",
-        "Minimal",
-        "Podcast",
-        "Highlight",
-        "Clean",
+        "pop",
+        "karaoke",
+        "hustle",
+        "grape",
+        "beast",
+        "poppin",
+        "aarit",
+        "soft-ai",
+        "gaming-stream",
+        "simple-one-word",
+        "kinetic-01",
+        "kinetic-02",
+        "podcast",
     ];
 
     if !allowed_caption_templates
@@ -684,6 +712,9 @@ fn create_clips(
 
     let output_dir =
         resolve_output_dir()?;
+
+    let caption_renderer =
+        resolve_caption_renderer(&app)?;
 
     println!(
         "Runtime root: {}",
@@ -745,6 +776,10 @@ fn create_clips(
             &runtime_root,
         )
         .env(
+            "SNIP_AI_PYTHON",
+            &python,
+        )
+        .env(
             "SNIP_AI_FFMPEG",
             resolve_ffmpeg(&app),
         )
@@ -755,6 +790,20 @@ fn create_clips(
         .env(
             "SNIP_AI_WHISPER_MODEL_DIR",
             runtime_root.join("whisper-model"),
+        )
+        .env(
+            "SNIP_AI_CAPTION_RENDERER_DIR",
+            &caption_renderer,
+        )
+        .env(
+            "SNIP_AI_NODE",
+            if cfg!(target_os = "windows") {
+                runtime_root
+                    .join("node")
+                    .join("node.exe")
+            } else {
+                PathBuf::from("node")
+            },
         )
         .current_dir(
             runtime_root.join("pipeline"),

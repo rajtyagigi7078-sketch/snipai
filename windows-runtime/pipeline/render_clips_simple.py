@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import queue
+import threading
 
 
 # ============================================================
@@ -148,7 +150,7 @@ def parse_arguments():
     caption_template = (
         sys.argv[4].strip()
         if len(sys.argv) >= 5
-        else "Bold Pop"
+        else "pop"
     )
 
     different_captions = (
@@ -158,27 +160,19 @@ def parse_arguments():
     )
 
     allowed_caption_templates = {
-        "Reveal",
-        "Reveal Cyan",
-        "Reveal Pink",
-        "Reveal Lime",
-        "Snap",
-        "Snap Gold",
-        "Snap Cyan",
-        "Snap Lime",
-        "Headline",
-        "Headline Bottom",
-        "Headline Yellow",
-        "Headline Red",
-        "Hype",
-        "Hype Blue",
-        "Hype Green",
-        "Hype Purple",
-        "MrBeast",
-        "Minimal",
-        "Podcast",
-        "Highlight",
-        "Clean",
+        "pop",
+        "karaoke",
+        "hustle",
+        "grape",
+        "beast",
+        "poppin",
+        "aarit",
+        "soft-ai",
+        "gaming-stream",
+        "simple-one-word",
+        "kinetic-01",
+        "kinetic-02",
+        "podcast",
     }
 
     if caption_template not in allowed_caption_templates:
@@ -936,6 +930,601 @@ def clean_old_outputs(output_dir):
             )
 
 
+
+# ============================================================
+# REMOTION CAPTION ENGINE
+# ============================================================
+
+REMOTION_THEMES = {
+    "pop", "karaoke", "hustle", "grape", "beast", "poppin", "aarit",
+    "soft-ai", "gaming-stream", "simple-one-word", "kinetic-01",
+    "kinetic-02", "podcast",
+}
+
+
+def resolve_caption_renderer():
+    configured = os.environ.get("SNIP_AI_CAPTION_RENDERER_DIR")
+    candidates = []
+
+    if configured:
+        candidates.append(
+            Path(configured).expanduser().resolve()
+        )
+
+    # Development:
+    # windows-runtime/pipeline/
+    #       ↓ ../../..
+    # clipping-app/snip-caption-renderer/
+    candidates.extend([
+        BASE_DIR / "caption-renderer",
+        BASE_DIR.parent / "caption-renderer",
+        BASE_DIR.parent.parent.parent / "snip-caption-renderer",
+    ])
+
+    for candidate in candidates:
+        if (candidate / "src" / "render.ts").is_file():
+            return candidate
+
+    searched = "\n".join(
+        f"  - {candidate}"
+        for candidate in candidates
+    )
+
+    raise RuntimeError(
+        "Remotion caption renderer was not found.\n\n"
+        "Searched:\n"
+        f"{searched}"
+    )
+
+
+def resolve_node():
+    configured = os.environ.get("SNIP_AI_NODE")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return candidate
+
+    found = shutil.which("node")
+    if found:
+        return Path(found)
+
+    raise RuntimeError(
+        "Node.js was not found. Snip AI needs Node.js for Remotion captions."
+    )
+
+
+def write_relative_transcript(
+    source_transcript,
+    clip_start,
+    clip_end,
+    output_path,
+):
+    data = json.loads(
+        Path(source_transcript).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    segments = []
+
+    MAX_WORDS_PER_LINE = 4
+
+    for segment in data.get("segments", []):
+        words = []
+
+        for raw_word in segment.get("words", []):
+            text = str(
+                raw_word.get("text", "")
+            ).strip()
+
+            if not text:
+                continue
+
+            try:
+                raw_start = float(
+                    raw_word.get("start")
+                )
+                raw_end = float(
+                    raw_word.get("end")
+                )
+            except (TypeError, ValueError):
+                continue
+
+            if raw_end <= clip_start:
+                continue
+
+            if raw_start >= clip_end:
+                continue
+
+            start_time = max(
+                0.0,
+                raw_start - clip_start,
+            )
+
+            end_time = min(
+                clip_end - clip_start,
+                raw_end - clip_start,
+            )
+
+            if end_time <= start_time:
+                continue
+
+            words.append(
+                {
+                    "text": text,
+                    "start": round(start_time, 3),
+                    "end": round(end_time, 3),
+                }
+            )
+
+        if not words:
+            continue
+
+        for index in range(
+            0,
+            len(words),
+            MAX_WORDS_PER_LINE,
+        ):
+            chunk = words[
+                index:index + MAX_WORDS_PER_LINE
+            ]
+
+            if not chunk:
+                continue
+
+            segments.append(
+                {
+                    "start": chunk[0]["start"],
+                    "end": chunk[-1]["end"],
+                    "text": " ".join(
+                        word["text"]
+                        for word in chunk
+                    ),
+                    "words": chunk,
+                }
+            )
+
+    if not segments:
+        raise RuntimeError(
+            f"No Whisper words overlap clip "
+            f"{clip_start:.3f}s -> "
+            f"{clip_end:.3f}s."
+        )
+
+    Path(output_path).write_text(
+        json.dumps(
+            {
+                "segments": segments
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+class PersistentRemotionWorker:
+    """
+    One long-lived Node/Remotion process.
+
+    Remotion is bundled once when the worker starts.
+    Every subsequent caption render reuses that bundle.
+    """
+
+    def __init__(self, renderer_dir, node, tsx_cli, worker_id):
+        self.renderer_dir = Path(renderer_dir)
+        self.node = Path(node)
+        self.tsx_cli = Path(tsx_cli)
+        self.worker_id = worker_id
+
+        self.process = None
+        self.lock = threading.Lock()
+
+    def start(self):
+        command = [
+            str(self.node),
+            str(self.tsx_cli),
+            str(self.renderer_dir / "src" / "render.ts"),
+            "--worker",
+        ]
+
+        print()
+        print(
+            f"[REMOTION WORKER {self.worker_id}] Starting..."
+        )
+
+        self.process = subprocess.Popen(
+            command,
+            cwd=str(self.renderer_dir),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=None,
+            text=True,
+            bufsize=1,
+        )
+
+        if self.process.stdin is None:
+            raise RuntimeError(
+                f"Remotion worker {self.worker_id}: "
+                "stdin was not created."
+            )
+
+        if self.process.stdout is None:
+            raise RuntimeError(
+                f"Remotion worker {self.worker_id}: "
+                "stdout was not created."
+            )
+
+        print(
+            f"[REMOTION WORKER {self.worker_id}] Ready."
+        )
+
+    def render(
+        self,
+        video_path,
+        transcript_path,
+        start,
+        end,
+        theme,
+        output_path,
+    ):
+        if self.process is None:
+            raise RuntimeError(
+                f"Remotion worker {self.worker_id} "
+                "is not running."
+            )
+
+        if self.process.poll() is not None:
+            raise RuntimeError(
+                f"Remotion worker {self.worker_id} "
+                f"already exited with code "
+                f"{self.process.returncode}."
+            )
+
+        job_id = (
+            f"worker-{self.worker_id}-"
+            f"{Path(output_path).stem}"
+        )
+
+        job = {
+            "id": job_id,
+            "video": str(Path(video_path).resolve()),
+            "transcript": str(
+                Path(transcript_path).resolve()
+            ),
+            "start": 0,
+            "end": float(end - start),
+            "theme": theme,
+            "output": str(
+                Path(output_path).resolve()
+            ),
+        }
+
+        with self.lock:
+            try:
+                payload = json.dumps(
+                    job,
+                    ensure_ascii=False,
+                )
+
+                self.process.stdin.write(
+                    payload + "\n"
+                )
+                self.process.stdin.flush()
+
+                response_line = (
+                    self.process.stdout.readline()
+                )
+
+                if not response_line:
+                    return_code = self.process.poll()
+
+                    raise RuntimeError(
+                        f"Remotion worker "
+                        f"{self.worker_id} closed unexpectedly "
+                        f"(exit code {return_code})."
+                    )
+
+                try:
+                    response = json.loads(
+                        response_line
+                    )
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"Remotion worker "
+                        f"{self.worker_id} returned invalid "
+                        f"response:\n"
+                        f"{response_line}"
+                    ) from exc
+
+                if not response.get("ok"):
+                    raise RuntimeError(
+                        response.get(
+                            "error",
+                            "Unknown Remotion worker error.",
+                        )
+                    )
+
+            except BrokenPipeError as exc:
+                raise RuntimeError(
+                    f"Remotion worker "
+                    f"{self.worker_id} pipe closed."
+                ) from exc
+
+        valid, info = validate_mp4(
+            Path(output_path)
+        )
+
+        if not valid:
+            raise RuntimeError(
+                f"Remotion output failed validation: {info}"
+            )
+
+        return info
+
+    def stop(self):
+        process = self.process
+
+        if process is None:
+            return
+
+        print(
+            f"[REMOTION WORKER {self.worker_id}] "
+            "Stopping..."
+        )
+
+        try:
+            if process.stdin:
+                process.stdin.close()
+        except Exception:
+            pass
+
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+            try:
+                process.wait(timeout=5)
+            except Exception:
+                pass
+
+        self.process = None
+
+
+class PersistentRemotionPool:
+    """
+    Fixed pool of persistent Remotion workers.
+
+    Two Python render threads can acquire two workers
+    simultaneously. Each worker bundles Remotion only once.
+    """
+
+    def __init__(self, worker_count):
+        self.worker_count = worker_count
+        self.workers = []
+        self.available = queue.Queue()
+
+    def start(self):
+        renderer_dir = resolve_caption_renderer()
+        node = resolve_node()
+
+        tsx_cli_candidates = [
+            renderer_dir
+            / "node_modules"
+            / "tsx"
+            / "dist"
+            / "cli.mjs",
+            renderer_dir
+            / "node_modules"
+            / "tsx"
+            / "dist"
+            / "cli.js",
+        ]
+
+        tsx_cli = next(
+            (
+                candidate
+                for candidate in tsx_cli_candidates
+                if candidate.is_file()
+            ),
+            None,
+        )
+
+        if tsx_cli is None:
+            raise RuntimeError(
+                "tsx runtime was not found inside "
+                "snip-caption-renderer/node_modules."
+            )
+
+        print()
+        print("=" * 70)
+        print("STARTING PERSISTENT REMOTION WORKERS")
+        print("=" * 70)
+        print(f"Workers : {self.worker_count}")
+        print("Bundle  : once per worker")
+        print("=" * 70)
+
+        started_workers = []
+
+        try:
+            for worker_id in range(
+                1,
+                self.worker_count + 1,
+            ):
+                worker = PersistentRemotionWorker(
+                    renderer_dir,
+                    node,
+                    tsx_cli,
+                    worker_id,
+                )
+
+                worker.start()
+
+                started_workers.append(worker)
+
+                self.available.put(worker)
+
+            self.workers = started_workers
+
+            print()
+            print(
+                f"Persistent Remotion workers ready: "
+                f"{len(self.workers)}"
+            )
+
+        except Exception:
+            for worker in started_workers:
+                worker.stop()
+
+            raise
+
+    def acquire(self):
+        return self.available.get()
+
+    def release(self, worker):
+        self.available.put(worker)
+
+    def render(
+        self,
+        video_path,
+        transcript_path,
+        start,
+        end,
+        theme,
+        output_path,
+    ):
+        worker = self.acquire()
+
+        try:
+            print()
+            print(
+                f"[REMOTION POOL] "
+                f"Worker {worker.worker_id} -> "
+                f"{Path(output_path).name}"
+            )
+
+            return worker.render(
+                video_path,
+                transcript_path,
+                start,
+                end,
+                theme,
+                output_path,
+            )
+
+        finally:
+            self.release(worker)
+
+    def stop(self):
+        for worker in self.workers:
+            worker.stop()
+
+        self.workers.clear()
+
+
+def render_remotion_captioned_clip(
+    video_path,
+    transcript_path,
+    start,
+    end,
+    theme,
+    output_path,
+    remotion_pool,
+):
+    if theme not in REMOTION_THEMES:
+        raise RuntimeError(
+            f"Unsupported Remotion theme: {theme}"
+        )
+
+    temp_dir = (
+        Path(output_path).parent
+        / ".snip_ai_tmp"
+    )
+
+    temp_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    relative_transcript = (
+        temp_dir
+        / (
+            Path(output_path).stem
+            + ".remotion.transcript.json"
+        )
+    )
+
+    write_relative_transcript(
+        transcript_path,
+        start,
+        end,
+        relative_transcript,
+    )
+
+    try:
+        print()
+        print("[RUN] REMOTION CAPTION RENDER")
+        print(f"Theme    : {theme}")
+        print(f"Duration : {end - start:.3f}s")
+        print("Renderer : persistent worker")
+
+        return remotion_pool.render(
+            video_path,
+            relative_transcript,
+            0,
+            end - start,
+            theme,
+            output_path,
+        )
+
+    finally:
+        try:
+            relative_transcript.unlink()
+        except FileNotFoundError:
+            pass
+
+def render_framed_source_clip(
+    source,
+    start,
+    end,
+    output,
+    framing,
+    encoder_info,
+):
+    temp_dir = output.parent / ".snip_ai_tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    working_mkv = temp_dir / f"{output.stem}.framed.mkv"
+    working_mp4 = temp_dir / f"{output.stem}.framed.mp4"
+
+    for path in (working_mkv, working_mp4):
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+
+    render_to_temp(
+        source,
+        start,
+        end,
+        working_mkv,
+        framing,
+        encoder_info,
+        None,
+    )
+
+    remux_to_mp4(working_mkv, working_mp4)
+
+    valid, info = validate_mp4(working_mp4)
+    if not valid:
+        raise RuntimeError(
+            f"Framed temporary clip failed validation: {info}"
+        )
+
+    return working_mp4
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -953,14 +1542,9 @@ def main():
         different_captions,
     ) = parse_arguments()
 
-    data = load_generation(
-        generation_file
-    )
-
+    data = load_generation(generation_file)
     source = get_source(data)
-
     moments = get_moments(data)
-
     encoder_info = select_encoder()
 
     print()
@@ -969,321 +1553,131 @@ def main():
     print("=" * 70)
 
     print()
-    print(
-        f"Generation JSON : "
-        f"{generation_file}"
-    )
-
-    print(
-        f"Output directory: "
-        f"{output_dir}"
-    )
-
-    print(
-        f"Canvas          : "
-        f"{OUT_W}x{OUT_H}"
-    )
-
-    print(
-        f"Canvas aspect   : "
-        f"9:16"
-    )
-
-    print(
-        f"Framing         : {framing}"
-    )
-
-    print(
-        f"Caption template: {caption_template}"
-    )
-
-    print(
-        f"Different caps  : {different_captions}"
-    )
-
-    print(
-        "Detection       : OFF"
-    )
-
-    print(
-        "Auto Pan        : OFF"
-    )
-
-    print(
-        "Smart Crop      : OFF"
-    )
+    print(f"Generation JSON : {generation_file}")
+    print(f"Output directory: {output_dir}")
+    print(f"Canvas          : {OUT_W}x{OUT_H}")
+    print("Canvas aspect   : 9:16")
+    print(f"Framing         : {framing}")
+    print(f"Remotion theme  : {caption_template}")
+    print(f"Different caps  : {different_captions}")
+    print("Detection       : OFF")
+    print("Auto Pan        : OFF")
+    print("Smart Crop      : OFF")
 
     print()
     print("VIDEO ENCODER")
     print("-" * 70)
-
-    print(
-        f"Mode    : "
-        f"{encoder_info['mode']}"
-    )
-
-    print(
-        f"Encoder : "
-        f"{encoder_info['encoder']}"
-    )
+    print(f"Mode    : {encoder_info['mode']}")
+    print(f"Encoder : {encoder_info['encoder']}")
 
     if encoder_info["device"]:
-        print(
-            f"Device  : "
-            f"{encoder_info['device']}"
-        )
+        print(f"Device  : {encoder_info['device']}")
 
     print()
 
     generation = data.get(
         "generation",
-        data.get(
-            "generation_number",
-            "?",
-        ),
+        data.get("generation_number", "?"),
     )
 
-    print(
-        f"Generation : {generation}"
-    )
+    print(f"Generation : {generation}")
+    print(f"Source     : {source}")
+    print(f"Clips      : {len(moments)}")
 
-    print(
-        f"Source     : {source}"
-    )
-
-    print(
-        f"Clips      : {len(moments)}"
-    )
-
-    width, height, fps = (
-        get_video_info(source)
-    )
+    width, height, fps = get_video_info(source)
 
     if width and height:
-        print(
-            f"Source res : "
-            f"{width}x{height}"
-        )
+        print(f"Source res : {width}x{height}")
 
     if fps:
-        print(
-            f"Source fps : "
-            f"{fps:.2f}"
-        )
+        print(f"Source fps : {fps:.2f}")
 
     print()
 
-    clean_old_outputs(
-        output_dir
+    clean_old_outputs(output_dir)
+
+    transcript = source.with_suffix(".transcript.json")
+
+    if not transcript.exists():
+        print(
+            "ERROR: Transcript file required for "
+            "Remotion captions was not found:"
+        )
+        print(transcript)
+        sys.exit(1)
+
+    # ========================================================
+    # PARALLEL RENDERING
+    # ========================================================
+
+    import concurrent.futures
+
+    RENDER_WORKERS = 2
+
+    print()
+    print("=" * 70)
+    print("PARALLEL RENDERING")
+    print("=" * 70)
+    print(f"Workers    : {RENDER_WORKERS}")
+    print("Mode       : 2 clips simultaneously")
+    print("Remotion   : persistent workers")
+    print("=" * 70)
+
+    remotion_pool = PersistentRemotionPool(
+        RENDER_WORKERS
     )
 
-    created = []
+    remotion_pool.start()
 
-    for index, moment in enumerate(
-        moments,
-        start=1,
-    ):
-        start, end = get_clip_times(
-            moment
-        )
+    def render_one_clip(index, moment):
+        start, end = get_clip_times(moment)
 
         output = (
             output_dir
             / f"snip_ai_simple_clip_{index:02d}.mp4"
         )
 
-        print()
-        print(
-            "-" * 70
-        )
+        clip_started = time.perf_counter()
 
+        print()
+        print("-" * 70)
         print(
-            f"[Render] Clip {index:02d} | "
+            f"[START] Clip {index:02d} | "
             f"{start:.2f}s -> {end:.2f}s"
         )
 
-        clip_started = time.perf_counter()
-
         try:
-            subtitle_file = None
-
-            if caption_template:
-                transcript = source.with_suffix(
-                    ".transcript.json"
-                )
-
-                if not transcript.exists():
-                    raise RuntimeError(
-                        "Transcript file required "
-                        "for captions was not found:\n"
-                        f"{transcript}"
-                    )
-
-                temp_dir = (
-                    output_dir
-                    / ".snip_ai_tmp"
-                )
-
-                temp_dir.mkdir(
-                    parents=True,
-                    exist_ok=True,
-                )
-
-                subtitle_file = (
-                    temp_dir
-                    / f"{output.stem}.ass"
-                )
-
-                engine = (
-                    Path(__file__).resolve().parent
-                    / "caption_engine.py"
-                )
-
-                if not engine.exists():
-                    raise RuntimeError(
-                        "Caption engine not found:\n"
-                        f"{engine}"
-                    )
-
-                template_map = {
-                    "Reveal": "Reveal",
-                    "Reveal Cyan": "Reveal Cyan",
-                    "Reveal Pink": "Reveal Pink",
-                    "Reveal Lime": "Reveal Lime",
-                    "Snap": "Snap",
-                    "Snap Gold": "Snap Gold",
-                    "Snap Cyan": "Snap Cyan",
-                    "Snap Lime": "Snap Lime",
-                    "Headline": "Headline",
-                    "Headline Bottom": "Headline Bottom",
-                    "Headline Yellow": "Headline Yellow",
-                    "Headline Red": "Headline Red",
-                    "Hype": "Hype",
-                    "Hype Blue": "Hype Blue",
-                    "Hype Green": "Hype Green",
-                    "Hype Purple": "Hype Purple",
-                    "MrBeast": "MrBeast",
-                    "Minimal": "Minimal",
-                    "Podcast": "Podcast",
-                    "Highlight": "Highlight",
-                    "Clean": "Clean",
-                }
-
-                if caption_template not in template_map:
-                    raise RuntimeError(
-                        f"Unsupported caption template: "
-                        f"{caption_template}"
-                    )
-
-                engine_template = template_map[
-                    caption_template
-                ]
-
-                # ------------------------------------------------
-                # Different captions mode
-                #
-                # When enabled, keep the selected caption family
-                # but rotate through compatible visual variants.
-                # When disabled, use the selected template exactly.
-                # ------------------------------------------------
-                if different_captions:
-                    variant_groups = {
-                        "Reveal": [
-                            "Reveal",
-                            "Reveal Cyan",
-                            "Reveal Pink",
-                            "Reveal Lime",
-                        ],
-                        "Snap": [
-                            "Snap",
-                            "Snap Gold",
-                            "Snap Cyan",
-                            "Snap Lime",
-                        ],
-                        "Headline": [
-                            "Headline",
-                            "Headline Bottom",
-                            "Headline Yellow",
-                            "Headline Red",
-                        ],
-                        "Hype": [
-                            "Hype",
-                            "Hype Blue",
-                            "Hype Green",
-                            "Hype Purple",
-                        ],
-                        "MrBeast": [
-                            "MrBeast",
-                            "Hype",
-                            "Snap",
-                            "Headline",
-                        ],
-                        "Minimal": [
-                            "Minimal",
-                            "Clean",
-                        ],
-                        "Podcast": [
-                            "Podcast",
-                            "Headline Bottom",
-                            "Minimal",
-                        ],
-                        "Highlight": [
-                            "Highlight",
-                            "Headline Yellow",
-                            "Headline Red",
-                        ],
-                        "Clean": [
-                            "Clean",
-                            "Minimal",
-                        ],
-                    }
-
-                    selected_variants = variant_groups.get(
-                        caption_template,
-                        [caption_template],
-                    )
-
-                    variant_index = (
-                        index - 1
-                    ) % len(selected_variants)
-
-                    engine_template = selected_variants[
-                        variant_index
-                    ]
-
-                caption_command = [
-                    sys.executable,
-                    str(engine),
-                    str(transcript),
-                    f"{start:.3f}",
-                    f"{end:.3f}",
-                    engine_template,
-                    str(subtitle_file),
-                ]
-
-                run_command(
-                    caption_command,
-                    "CAPTION GENERATION",
-                )
-
-                if (
-                    not subtitle_file.exists()
-                    or subtitle_file.stat().st_size == 0
-                ):
-                    raise RuntimeError(
-                        "Caption engine did not create "
-                        "a valid ASS subtitle file."
-                    )
-
-            info = render_clip(
+            framed_clip = render_framed_source_clip(
                 source,
                 start,
                 end,
                 output,
                 framing,
                 encoder_info,
-                subtitle_file,
             )
+
+            try:
+                info = render_remotion_captioned_clip(
+                    framed_clip,
+                    transcript,
+                    start,
+                    end,
+                    caption_template,
+                    output,
+                    remotion_pool,
+                )
+
+            finally:
+                try:
+                    framed_clip.unlink()
+                except FileNotFoundError:
+                    pass
+
+            if not output.exists():
+                raise RuntimeError(
+                    "Remotion renderer completed but "
+                    "final output file was not created."
+                )
 
             elapsed = (
                 time.perf_counter()
@@ -1295,10 +1689,7 @@ def main():
                 / (1024 * 1024)
             )
 
-            created.append(
-                output
-            )
-
+            print()
             print(
                 f"[OK] Clip {index:02d} | "
                 f"{elapsed:.1f}s | "
@@ -1307,22 +1698,83 @@ def main():
                 f"{info['width']}x{info['height']}"
             )
 
+            return {
+                "index": index,
+                "output": output,
+                "info": info,
+                "elapsed": elapsed,
+                "error": None,
+            }
+
         except Exception as exc:
+            print()
             print(
                 f"[ERROR] Clip {index:02d} failed:"
             )
+            print(str(exc))
 
-            print(
-                str(exc)
-            )
-
-            # Never leave an invalid final MP4
-            # behind as if it were a valid result.
             try:
                 if output.exists():
                     output.unlink()
             except Exception:
                 pass
+
+            return {
+                "index": index,
+                "output": output,
+                "info": None,
+                "elapsed": (
+                    time.perf_counter()
+                    - clip_started
+                ),
+                "error": str(exc),
+            }
+
+    results = []
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=RENDER_WORKERS
+        ) as executor:
+
+            futures = [
+                executor.submit(
+                    render_one_clip,
+                    index,
+                    moment,
+                )
+                for index, moment in enumerate(
+                    moments,
+                    start=1,
+                )
+            ]
+
+            for future in concurrent.futures.as_completed(
+                futures
+            ):
+                results.append(
+                    future.result()
+                )
+
+    finally:
+        remotion_pool.stop()
+
+    results.sort(
+        key=lambda item: item["index"]
+    )
+
+    created = [
+        result["output"]
+        for result in results
+        if result["error"] is None
+        and result["output"].exists()
+    ]
+
+    failed = [
+        result
+        for result in results
+        if result["error"] is not None
+    ]
 
     total = (
         time.perf_counter()
@@ -1334,44 +1786,30 @@ def main():
     print("SIMPLE RENDER COMPLETE")
     print("=" * 70)
 
-    print(
-        f"Created    : "
-        f"{len(created)}/{len(moments)}"
-    )
-
-    print(
-        f"Resolution : "
-        f"{OUT_W}x{OUT_H}"
-    )
-
-    print(
-        "Canvas     : 9:16"
-    )
-
-    print(
-        f"Framing    : {framing}"
-    )
-
-    print(
-        f"Captions   : {caption_template}"
-    )
-
-    print(
-        f"Encoder    : "
-        f"{encoder_info['encoder']}"
-    )
-
-    print(
-        f"Total time : "
-        f"{total:.1f}s"
-    )
-
-    print(
-        f"Output     : "
-        f"{output_dir}"
-    )
-
+    print(f"Created    : {len(created)}/{len(moments)}")
+    print(f"Failed     : {len(failed)}")
+    print(f"Resolution : {OUT_W}x{OUT_H}")
+    print("Canvas     : 9:16")
+    print(f"Framing    : {framing}")
+    print(f"Captions   : {caption_template}")
+    print(f"Encoder    : {encoder_info['encoder']}")
+    print(f"Workers    : {RENDER_WORKERS}")
+    print(f"Total time : {total:.1f}s")
+    print(f"Output     : {output_dir}")
     print("=" * 70)
+
+    if failed:
+        print()
+        print("FAILED CLIPS")
+        print("-" * 70)
+
+        for result in failed:
+            print(
+                f"Clip {result['index']:02d}: "
+                f"{result['error']}"
+            )
+
+        print("-" * 70)
 
     if not created:
         sys.exit(1)
@@ -1379,3 +1817,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
