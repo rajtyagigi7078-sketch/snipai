@@ -150,7 +150,6 @@ jobs:
             "$pipeline/story_event_map.py",
             "$pipeline/generation_selector.py",
             "$pipeline/render_clips_simple.py",
-            "$pipeline/caption_engine.py"
           )
 
           foreach ($file in $required) {

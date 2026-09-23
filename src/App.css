@@ -632,7 +632,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Montserrat";
-  src: url("/fonts/Montserrat-Black.ttf") format("truetype");
+  src: url("/fonts/Montserrat.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -640,7 +640,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Poppins";
-  src: url("/fonts/Poppins-Black.ttf") format("truetype");
+  src: url("/fonts/Poppins.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -648,7 +648,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Inter";
-  src: url("/fonts/Inter-Black.ttf") format("truetype");
+  src: url("/fonts/Inter.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -656,7 +656,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Bebas Neue";
-  src: url("/fonts/BebasNeue-Regular.ttf") format("truetype");
+  src: url("/fonts/BebasNeue.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -664,7 +664,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Anton";
-  src: url("/fonts/Anton-Regular.ttf") format("truetype");
+  src: url("/fonts/Anton.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -672,7 +672,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Oswald";
-  src: url("/fonts/Oswald-Bold.ttf") format("truetype");
+  src: url("/fonts/Oswald.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -680,7 +680,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Rubik";
-  src: url("/fonts/Rubik-Black.ttf") format("truetype");
+  src: url("/fonts/Rubik.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -688,7 +688,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Kanit";
-  src: url("/fonts/Kanit-Black.ttf") format("truetype");
+  src: url("/fonts/Kanit.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -696,7 +696,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Teko";
-  src: url("/fonts/Teko-Bold.ttf") format("truetype");
+  src: url("/fonts/Teko.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -704,7 +704,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Anton SC";
-  src: url("/fonts/AntonSC-Regular.ttf") format("truetype");
+  src: url("/fonts/AntonSC.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -712,7 +712,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "League Spartan";
-  src: url("/fonts/LeagueSpartan-Black.ttf") format("truetype");
+  src: url("/fonts/LeagueSpartan.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -720,7 +720,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Cinzel Decorative";
-  src: url("/fonts/CinzelDecorative-Black.ttf") format("truetype");
+  src: url("/fonts/CinzelDecorative.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -728,7 +728,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Archivo Black";
-  src: url("/fonts/Archivo-Black.ttf") format("truetype");
+  src: url("/fonts/ArchivoBlack.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -736,7 +736,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Sora";
-  src: url("/fonts/Sora-ExtraBold.ttf") format("truetype");
+  src: url("/fonts/Sora.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -744,7 +744,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Nunito";
-  src: url("/fonts/Nunito-Black.ttf") format("truetype");
+  src: url("/fonts/Nunito.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -752,7 +752,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Prompt";
-  src: url("/fonts/Prompt-Black.ttf") format("truetype");
+  src: url("/fonts/Prompt.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -760,7 +760,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Changa";
-  src: url("/fonts/Changa-ExtraBold.ttf") format("truetype");
+  src: url("/fonts/Changa.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -768,7 +768,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Cabin";
-  src: url("/fonts/Cabin-Bold.ttf") format("truetype");
+  src: url("/fonts/Cabin.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -776,7 +776,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Yanone Kaffeesatz";
-  src: url("/fonts/YanoneKaffeesatz-Bold.ttf") format("truetype");
+  src: url("/fonts/YanoneKaffeesatz.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -784,7 +784,7 @@ input:focus-visible {
 
 @font-face {
   font-family: "Alfa Slab One";
-  src: url("/fonts/AlfaSlabOne-Regular.ttf") format("truetype");
+  src: url("/fonts/AlfaSlabOne.ttf") format("truetype");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
