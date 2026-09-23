@@ -1,0 +1,28 @@
+{
+  "name": "snip-caption-renderer",
+  "version": "1.0.0",
+  "description": "Standalone Remotion caption renderer for Snip AI",
+  "main": "index.js",
+  "scripts": {
+    "render": "tsx src/render.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@remotion/bundler": "^4.0.526",
+    "@remotion/renderer": "^4.0.526",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.526",
+    "remotion-captions-themes": "file:../remotion-captions-themes",
+    "tsx": "^4.20.6"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "typescript": "^5.9.3"
+  }
+}
