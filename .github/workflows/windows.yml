@@ -254,8 +254,8 @@ jobs:
           npm install --omit=dev
 
           Write-Host ""
-          Write-Host "Installed renderer dependencies:"
-          npm ls --depth=0
+          Write-Host "Installed production renderer dependencies:"
+          npm ls --omit=dev --depth=0
 
           Pop-Location
 
