@@ -28,6 +28,12 @@ static PIPELINE_CONTROL: Mutex<PipelineControl> = Mutex::new(PipelineControl {
 
 struct PipelineRequestGuard;
 
+#[derive(serde::Serialize)]
+struct GeneratedClipsResult {
+    paths: Vec<String>,
+    social_captions: Vec<String>,
+}
+
 impl Drop for PipelineRequestGuard {
     fn drop(&mut self) {
         if let Ok(mut control) = PIPELINE_CONTROL.lock() {
@@ -837,7 +843,7 @@ async fn create_clips(
     caption_template: String,
     different_captions: bool,
     audio_language: String,
-) -> Result<Vec<String>, String> {
+) -> Result<GeneratedClipsResult, String> {
     let _request_guard = begin_pipeline_request()?;
     tauri::async_runtime::spawn_blocking(move || {
         create_clips_inner(
@@ -862,7 +868,7 @@ fn create_clips_inner(
     caption_template: String,
     different_captions: bool,
     audio_language: String,
-) -> Result<Vec<String>, String> {
+) -> Result<GeneratedClipsResult, String> {
     println!();
     println!("==============================================");
     println!("SNIP AI ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â CREATE CLIPS");
@@ -1120,7 +1126,69 @@ fn create_clips_inner(
     println!("==============================================");
     println!();
 
-    Ok(output_paths)
+    let social_captions = load_social_captions(&output_dir, output_paths.len());
+    Ok(GeneratedClipsResult {
+        paths: output_paths,
+        social_captions,
+    })
+}
+
+fn load_social_captions(output_dir: &Path, clip_count: usize) -> Vec<String> {
+    const FALLBACK: &str = "A standout moment worth sharing.";
+    let selected_generation = output_dir
+        .join(".snip-ai-work")
+        .join("selected-generation.json");
+    let clips = fs::read_to_string(selected_generation)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        .and_then(|data| data.get("clips").and_then(serde_json::Value::as_array).cloned())
+        .unwrap_or_default();
+
+    let mut ranked_clips = clips;
+    ranked_clips.sort_by_key(|clip| {
+        clip.get("generation_rank")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(u64::MAX)
+    });
+
+    (0..clip_count)
+        .map(|index| {
+            let text = ranked_clips
+                .get(index)
+                .and_then(|clip| clip.get("text"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let cleaned = cleaned.trim_matches(|character: char| {
+                character.is_whitespace() || ",.;:!?-–—\"'“”‘’".contains(character)
+            });
+            if cleaned.is_empty() {
+                return FALLBACK.to_string();
+            }
+            if cleaned.chars().count() <= 140 {
+                return cleaned.to_string();
+            }
+
+            let mut shortened = String::new();
+            for word in cleaned.split_whitespace() {
+                let candidate_length = shortened.chars().count()
+                    + usize::from(!shortened.is_empty())
+                    + word.chars().count();
+                if candidate_length > 137 {
+                    break;
+                }
+                if !shortened.is_empty() {
+                    shortened.push(' ');
+                }
+                shortened.push_str(word);
+            }
+            if shortened.is_empty() {
+                cleaned.chars().take(137).collect::<String>()
+            } else {
+                format!("{}…", shortened.trim_end_matches(|character: char| ",.;:!?-–—".contains(character)))
+            }
+        })
+        .collect()
 }
 
 #[tauri::command]

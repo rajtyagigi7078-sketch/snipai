@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 
+from hardware_profile import get_or_detect
+
 
 # ============================================================
 # SNIP AI â€” PORTABLE PIPELINE RUNNER V4
@@ -1409,6 +1411,12 @@ def main():
 
     prepare_workspace()
 
+    # Persist hardware choices per user on first processing run. Keep CPU fallback
+    # available in whisper_transcribe.py if CUDA cannot initialize later.
+    hardware = get_or_detect(WHISPER_PYTHON, FFMPEG)
+    PROCESS_ENV["SNIP_AI_WHISPER_DEVICE"] = hardware["transcription"]["device"]
+    PROCESS_ENV["SNIP_AI_VIDEO_ENCODER"] = hardware["video"]["mode"]
+
     duration = get_video_duration(
         video_path
     )
@@ -1426,6 +1434,17 @@ def main():
         transcript_path_for(
             video_path
         )
+    )
+
+    # Keep Whisper's output and the pipeline's validator on the same path.
+    # The app process can inherit SNIP_AI_TRANSCRIPT_PATH from unrelated
+    # benchmark/manual runs; explicitly pin it to this source video's cache.
+    PROCESS_ENV["SNIP_AI_TRANSCRIPT_PATH"] = str(
+        transcript_path
+    )
+
+    print(
+        f"Transcript output: {transcript_path}"
     )
 
     run_command(

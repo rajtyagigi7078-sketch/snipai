@@ -1733,14 +1733,22 @@ input:focus-visible {
 }
 
 .clip-card-footer {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 9px;
+  gap: 7px 8px;
+  padding: 9px 10px 10px;
 }
 
-.clip-card-footer > div:first-child {
+.clip-card-footer-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.clip-card-footer-meta {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1759,6 +1767,47 @@ input:focus-visible {
   font-size: 7px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.clip-social-caption {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.clip-social-caption p {
+  min-width: 0;
+  margin: 0;
+  color: #c7c8d0;
+  font-size: 9px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.clip-copy-caption-button {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #30313d;
+  border-radius: 7px;
+  background: #171821;
+  color: #a8a9b5;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.clip-copy-caption-button:hover,
+.clip-copy-caption-button.copied {
+  border-color: rgba(137, 112, 255, 0.65);
+  background: rgba(115, 87, 235, 0.16);
+  color: #c4b5ff;
 }
 
 .clip-folder-button {

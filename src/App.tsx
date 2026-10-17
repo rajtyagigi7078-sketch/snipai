@@ -8,6 +8,7 @@ import {
   Check,
   Clapperboard,
   Clock3,
+  Copy,
   ExternalLink,
   FileVideo,
   Film,
@@ -304,7 +305,13 @@ type GenerationRecord = {
   template: string;
   clipCount: number;
   paths: string[];
+  socialCaptions?: string[];
   kind?: "clips" | "caption";
+};
+
+type GeneratedClipsResult = {
+  paths: string[];
+  social_captions: string[];
 };
 
 const HISTORY_STORAGE_KEY = "snip-ai-generation-history-v1";
@@ -690,6 +697,8 @@ function App() {
   const [outputPaths, setOutputPaths] = useState<string[]>(
     [],
   );
+  const [outputSocialCaptions, setOutputSocialCaptions] = useState<string[]>([]);
+  const [copiedCaptionIndex, setCopiedCaptionIndex] = useState<number | null>(null);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [showGallery, setShowGallery] = useState(false);
@@ -807,6 +816,7 @@ function App() {
   const openHistoryRecord = (record: GenerationRecord) => {
     if (!record.paths.length) return;
     setOutputPaths(record.paths);
+    setOutputSocialCaptions(record.socialCaptions ?? []);
     setVideoName(record.videoName);
     setFormat(record.format);
     setTemplate(
@@ -820,6 +830,18 @@ function App() {
     setProcessingComplete(false);
     setPlayingClip(null);
     setSelectedClips(new Set(record.paths.map((_, index) => index)));
+  };
+
+  const copySocialCaption = async (index: number) => {
+    const caption = outputSocialCaptions[index];
+    if (!caption) return;
+    try {
+      await navigator.clipboard.writeText(caption);
+      setCopiedCaptionIndex(index);
+      window.setTimeout(() => setCopiedCaptionIndex((current) => current === index ? null : current), 1600);
+    } catch (error) {
+      console.error("Could not copy clip caption:", error);
+    }
   };
 
   const openHistoryFolder = async (paths: string[]) => {
@@ -1054,7 +1076,7 @@ function App() {
     setProcessingStage(3);
     setProcessingProgress(50);
 
-    const result = await invoke<string[]>(
+    const result = await invoke<GeneratedClipsResult>(
       "create_clips",
       {
         inputPath: selectedInputPath,
@@ -1066,14 +1088,15 @@ function App() {
       },
     );
 
-    if (!result || result.length === 0) {
+    if (!result?.paths?.length) {
       throw new Error(
         "The pipeline finished without generating any valid clips.",
       );
     }
 
     setOutputKind("clips");
-    setOutputPaths(result);
+    setOutputPaths(result.paths);
+    setOutputSocialCaptions(result.social_captions ?? []);
 
     setProcessingStage(4);
     setProcessingProgress(82);
@@ -1098,13 +1121,14 @@ function App() {
         videoName: videoName || "Untitled video",
         format,
         template,
-        clipCount: result.length,
-        paths: result,
+        clipCount: result.paths.length,
+        paths: result.paths,
+        socialCaptions: result.social_captions ?? [],
         kind: "clips" as const,
       },
       ...previous.filter(
         (item) =>
-          item.paths.join("|") !== result.join("|"),
+          item.paths.join("|") !== result.paths.join("|"),
       ),
     ].slice(0, 30));
 
@@ -1617,19 +1641,36 @@ function App() {
                       </div>
 
                       <div className="clip-card-footer">
-                        <div>
-                          <strong>
-                            Clip{" "}
-                            {String(index + 1).padStart(
-                              2,
-                              "0",
-                            )}
-                          </strong>
+                        <div className="clip-card-footer-content">
+                          <div className="clip-card-footer-meta">
+                            <strong>
+                              Clip{" "}
+                              {String(index + 1).padStart(
+                                2,
+                                "0",
+                              )}
+                            </strong>
 
-                          <span>
-                             {format} Â·{" "}
-                            {selectedTemplate.name}
-                          </span>
+                            <span>
+                               {format} Â·{" "}
+                              {selectedTemplate.name}
+                            </span>
+                          </div>
+
+                          {outputKind === "clips" && outputSocialCaptions[index] && (
+                            <div className="clip-social-caption">
+                              <p title={outputSocialCaptions[index]}>{outputSocialCaptions[index]}</p>
+                              <button
+                                type="button"
+                                className={`clip-copy-caption-button ${copiedCaptionIndex === index ? "copied" : ""}`}
+                                onClick={() => void copySocialCaption(index)}
+                                aria-label={copiedCaptionIndex === index ? "Caption copied" : `Copy caption for clip ${index + 1}`}
+                                title={copiedCaptionIndex === index ? "Copied" : "Copy caption"}
+                              >
+                                {copiedCaptionIndex === index ? <Check size={13} /> : <Copy size={13} />}
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         <button
