@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.10",
     "@remotion/bundler": "^4.0.526",
     "@remotion/renderer": "^4.0.526",
     "react": "^18.3.1",

@@ -1,11 +1,64 @@
-import { FormEvent, useState } from "react";
-import { Mail, Lock, User, ArrowLeft, CheckCircle2 } from "lucide-react";
+﻿import { FormEvent, useEffect, useState } from "react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Lock,
+  Mail,
+  User,
+} from "lucide-react";
 import { supabase } from "./lib/supabase";
+import "./AuthScreen.css";
 
 type Mode = "login" | "signup";
 type Step = "form" | "otp";
 
-export default function AuthScreen() {
+type AuthScreenProps = {
+  onAuthSuccess?: () => void;
+};
+
+const RESEND_COOLDOWN_SECONDS = 60;
+
+function formatAuthError(message: string) {
+  const lower = message.toLowerCase();
+
+  if (lower.includes("invalid login credentials")) {
+    return "Incorrect email or password.";
+  }
+
+  if (lower.includes("email not confirmed")) {
+    return "Please verify your email first.";
+  }
+
+  if (
+    lower.includes("otp_expired") ||
+    lower.includes("token has expired") ||
+    lower.includes("invalid or expired")
+  ) {
+    return "This verification code has expired or is invalid. Please use the latest code from your email.";
+  }
+
+  if (lower.includes("password should be at least")) {
+    return "Password must be at least 6 characters.";
+  }
+
+  if (lower.includes("user already registered")) {
+    return "An account with this email already exists. Please login instead.";
+  }
+
+  if (lower.includes("rate limit")) {
+    return "Too many attempts. Please wait a little and try again.";
+  }
+
+  if (lower.includes("email rate limit")) {
+    return "Too many verification emails were requested. Please wait before requesting another code.";
+  }
+
+  return message || "Something went wrong. Please try again.";
+}
+
+export default function AuthScreen({
+  onAuthSuccess,
+}: AuthScreenProps) {
   const [mode, setMode] = useState<Mode>("login");
   const [step, setStep] = useState<Step>("form");
 
@@ -16,20 +69,37 @@ export default function AuthScreen() {
 
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const cleanEmail = email.trim().toLowerCase();
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+
+    const timer = window.setInterval(() => {
+      setResendCooldown((current) =>
+        Math.max(0, current - 1),
+      );
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [resendCooldown]);
 
   function clearMessages() {
     setError("");
     setMessage("");
   }
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
+  function startResendCooldown() {
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
+  }
 
+  async function submit(event: FormEvent) {
+    event.preventDefault();
     clearMessages();
+
+    const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail) {
       setError("Please enter your email address.");
@@ -50,6 +120,12 @@ export default function AuthScreen() {
 
     try {
       if (mode === "signup") {
+        /*
+         * ACCOUNT CREATION ONLY.
+         *
+         * No license key is collected here.
+         * No license RPC is called here.
+         */
         const { data, error: signUpError } =
           await supabase.auth.signUp({
             email: cleanEmail,
@@ -65,109 +141,200 @@ export default function AuthScreen() {
           throw signUpError;
         }
 
+        /*
+         * If Supabase returned a session immediately,
+         * email confirmation is disabled.
+         *
+         * Authentication is complete. main.tsx will check
+         * the license separately and show the license screen.
+         */
         if (data.session) {
+          onAuthSuccess?.();
           return;
         }
 
+        /*
+         * Normal case:
+         * Confirm Email is enabled.
+         * Wait for OTP.
+         */
         setStep("otp");
+        startResendCooldown();
+
         setMessage(
-          `We sent a verification code to ${cleanEmail}.`,
+          `Verification code sent to ${cleanEmail}. Please verify your email to continue.`,
         );
-      } else {
-        const { error: signInError } =
-          await supabase.auth.signInWithPassword({
-            email: cleanEmail,
-            password,
-          });
 
-        if (signInError) {
-          if (
-            signInError.message
-              .toLowerCase()
-              .includes("email not confirmed")
-          ) {
-            const { error: resendError } =
-              await supabase.auth.resend({
-                type: "signup",
-                email: cleanEmail,
-              });
+        return;
+      }
 
-            if (resendError) {
-              throw resendError;
-            }
+      /*
+       * LOGIN ONLY.
+       *
+       * No license key is required here.
+       */
+      const { error: signInError } =
+        await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
 
-            setStep("otp");
-            setMessage(
-              `Your email is not verified. We sent a new verification code to ${cleanEmail}.`,
-            );
-            return;
+      if (signInError) {
+        const lower =
+          signInError.message.toLowerCase();
+
+        /*
+         * Existing account but email is not verified.
+         * Send a fresh signup verification code.
+         */
+        if (lower.includes("email not confirmed")) {
+          const { error: resendError } =
+            await supabase.auth.resend({
+              type: "signup",
+              email: cleanEmail,
+            });
+
+          if (resendError) {
+            throw resendError;
           }
 
-          throw signInError;
-        }
-      }
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Something went wrong. Please try again.";
+          setStep("otp");
+          startResendCooldown();
 
-      setError(message);
+          setMessage(
+            `Your email is not verified. A new verification code was sent to ${cleanEmail}.`,
+          );
+
+          return;
+        }
+
+        throw signInError;
+      }
+
+      /*
+       * Login successful.
+       *
+       * main.tsx will now check the lifetime license:
+       * active license → App
+       * no license → LicenseActivationScreen
+       */
+      onAuthSuccess?.();
+    } catch (err) {
+      setError(
+        formatAuthError(
+          err instanceof Error
+            ? err.message
+            : "Something went wrong.",
+        ),
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleVerifyOtp(event: FormEvent) {
+  async function verifyOtp(event: FormEvent) {
     event.preventDefault();
-
     clearMessages();
 
-    const cleanOtp = otp.replace(/\D/g, "");
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanOtp = otp.replace(/\D/g, "").trim();
 
-    if (cleanOtp.length !== 8) {
-      setError("Enter the 8-digit verification code.");
+    if (!cleanEmail) {
+      setError("Email address is missing.");
+      return;
+    }
+
+    if (!/^\d{8}$/.test(cleanOtp)) {
+      setError(
+        "Please enter the 8-digit verification code.",
+      );
       return;
     }
 
     setLoading(true);
 
     try {
-      const { data, error: verifyError } =
-        await supabase.auth.verifyOtp({
-          email: cleanEmail,
-          token: cleanOtp,
-          type: "email",
-        });
+      /*
+       * OTP verification ONLY.
+       *
+       * License activation does NOT happen here anymore.
+       */
+      const {
+        data: verifyData,
+        error: verifyError,
+      } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: cleanOtp,
+        type: "email",
+      });
 
       if (verifyError) {
         throw verifyError;
       }
 
-      if (!data.session) {
+      /*
+       * Make sure an authenticated session exists.
+       */
+      if (!verifyData.session) {
         throw new Error(
-          "Verification completed, but no session was created. Please try logging in.",
+          "Email was verified, but no authenticated session was returned. Please login again.",
         );
       }
 
-      setMessage("Email verified successfully.");
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Invalid or expired verification code.";
+      /*
+       * Explicitly persist the returned session.
+       */
+      const { error: sessionError } =
+        await supabase.auth.setSession({
+          access_token:
+            verifyData.session.access_token,
+          refresh_token:
+            verifyData.session.refresh_token,
+        });
 
-      setError(message);
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      /*
+       * From this point the account is authenticated.
+       *
+       * main.tsx will detect:
+       * session = true
+       * license = false
+       *
+       * and show LicenseActivationScreen.
+       */
+      setMessage(
+        "Email verified successfully. Now activate your lifetime access.",
+      );
+
+      onAuthSuccess?.();
+    } catch (err) {
+      setError(
+        formatAuthError(
+          err instanceof Error
+            ? err.message
+            : "Verification failed.",
+        ),
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleResend() {
+  async function resendCode() {
+    if (resendCooldown > 0 || resending) {
+      return;
+    }
+
     clearMessages();
     setResending(true);
 
     try {
+      const cleanEmail =
+        email.trim().toLowerCase();
+
       const { error: resendError } =
         await supabase.auth.resend({
           type: "signup",
@@ -178,221 +345,87 @@ export default function AuthScreen() {
         throw resendError;
       }
 
-      setMessage("A new verification code has been sent.");
-      setOtp("");
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Could not resend the verification code.";
+      startResendCooldown();
 
-      setError(message);
+      setMessage(
+        `A new verification code was sent to ${cleanEmail}.`,
+      );
+    } catch (err) {
+      setError(
+        formatAuthError(
+          err instanceof Error
+            ? err.message
+            : "Could not resend verification code.",
+        ),
+      );
     } finally {
       setResending(false);
     }
   }
 
-  function switchMode(nextMode: Mode) {
-    clearMessages();
-    setMode(nextMode);
-    setStep("form");
-    setOtp("");
-  }
-
   function backToForm() {
     clearMessages();
-    setStep("form");
     setOtp("");
+    setStep("form");
   }
 
-  return (
-    <div className="auth-screen">
-      <div className="auth-ambient auth-ambient-one" />
-      <div className="auth-ambient auth-ambient-two" />
+  function switchMode() {
+    clearMessages();
+    setOtp("");
+    setStep("form");
 
-      <div className="auth-card">
-        <div className="auth-brand">
-          <div className="auth-logo">
-            <span>S</span>
+    setMode((current) =>
+      current === "login" ? "signup" : "login",
+    );
+  }
+
+  /*
+   * OTP SCREEN
+   */
+  if (step === "otp") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-ambient auth-ambient-one" />
+        <div className="auth-ambient auth-ambient-two" />
+
+        <div className="auth-card">
+          <div className="auth-brand">
+            <div className="auth-logo">S</div>
+
+            <div>
+              <strong>
+                Snip <b>AI</b>
+              </strong>
+              <span>AI clipping workspace</span>
+            </div>
           </div>
 
-          <div>
-            <strong>SNIP AI</strong>
-            <span>AI clipping studio</span>
+          <div className="auth-heading">
+            <span className="auth-eyebrow">
+              EMAIL VERIFICATION
+            </span>
+
+            <h1>Verify your email.</h1>
+
+            <p>
+              We sent an 8-digit verification code to{" "}
+              <strong>
+                {email.trim().toLowerCase()}
+              </strong>.
+            </p>
           </div>
-        </div>
 
-        {step === "form" ? (
-          <>
-            <div className="auth-heading">
-              <span className="auth-eyebrow">
-                {mode === "signup"
-                  ? "CREATE ACCOUNT"
-                  : "WELCOME BACK"}
-              </span>
+          <form
+            className="auth-form"
+            onSubmit={verifyOtp}
+          >
+            <label className="auth-field">
+              <span>Verification code</span>
 
-              <h1>
-                {mode === "signup"
-                  ? "Create your account"
-                  : "Welcome back"}
-              </h1>
-
-              <p>
-                {mode === "signup"
-                  ? "Create your Snip AI account and start creating clips."
-                  : "Sign in to continue creating clips with Snip AI."}
-              </p>
-            </div>
-
-            <form
-              className="auth-form"
-              onSubmit={handleSubmit}
-            >
-              {mode === "signup" && (
-                <label className="auth-field">
-                  <span>Full name</span>
-
-                  <div className="auth-input-wrap">
-                    <User size={17} />
-                    <input
-                      value={fullName}
-                      onChange={(event) =>
-                        setFullName(event.target.value)
-                      }
-                      placeholder="Your name"
-                      autoComplete="name"
-                      disabled={loading}
-                    />
-                  </div>
-                </label>
-              )}
-
-              <label className="auth-field">
-                <span>Email address</span>
-
-                <div className="auth-input-wrap">
-                  <Mail size={17} />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(event) =>
-                      setEmail(event.target.value)
-                    }
-                    placeholder="you@example.com"
-                    autoComplete="email"
-                    disabled={loading}
-                  />
-                </div>
-              </label>
-
-              <label className="auth-field">
-                <span>Password</span>
-
-                <div className="auth-input-wrap">
-                  <Lock size={17} />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(event) =>
-                      setPassword(event.target.value)
-                    }
-                    placeholder="Minimum 6 characters"
-                    autoComplete={
-                      mode === "signup"
-                        ? "new-password"
-                        : "current-password"
-                    }
-                    disabled={loading}
-                  />
-                </div>
-              </label>
-
-              {error && (
-                <div className="auth-message auth-error">
-                  {error}
-                </div>
-              )}
-
-              {message && (
-                <div className="auth-message auth-success">
-                  <CheckCircle2 size={16} />
-                  <span>{message}</span>
-                </div>
-              )}
-
-              <button
-                className="auth-submit"
-                type="submit"
-                disabled={loading}
-              >
-                {loading
-                  ? "Please wait..."
-                  : mode === "signup"
-                    ? "Create account"
-                    : "Sign in"}
-              </button>
-            </form>
-
-            <div className="auth-switch">
-              <span>
-                {mode === "signup"
-                  ? "Already have an account?"
-                  : "Don't have an account?"}
-              </span>
-
-              <button
-                type="button"
-                onClick={() =>
-                  switchMode(
-                    mode === "signup"
-                      ? "login"
-                      : "signup",
-                  )
-                }
-              >
-                {mode === "signup"
-                  ? "Sign in"
-                  : "Create account"}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="auth-back"
-              onClick={backToForm}
-              disabled={loading || resending}
-            >
-              <ArrowLeft size={16} />
-              Back
-            </button>
-
-            <div className="auth-heading otp-heading">
-              <span className="auth-eyebrow">
-                EMAIL VERIFICATION
-              </span>
-
-              <h1>Enter your code</h1>
-
-              <p>
-                We sent an 8-digit verification code to
-                <strong> {cleanEmail}</strong>.
-              </p>
-            </div>
-
-            <form
-              className="auth-form"
-              onSubmit={handleVerifyOtp}
-            >
-              <label className="auth-field">
-                <span>Verification code</span>
+              <div className="auth-input-wrap">
+                <Mail size={17} />
 
                 <input
-                  className="auth-otp"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={8}
                   value={otp}
                   onChange={(event) =>
                     setOtp(
@@ -401,365 +434,228 @@ export default function AuthScreen() {
                         .slice(0, 8),
                     )
                   }
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={8}
                   placeholder="00000000"
                   autoFocus
-                  disabled={loading}
                 />
-              </label>
+              </div>
+            </label>
 
-              {error && (
-                <div className="auth-message auth-error">
-                  {error}
-                </div>
-              )}
+            {error && (
+              <div className="auth-message auth-error">
+                {error}
+              </div>
+            )}
 
-              {message && (
-                <div className="auth-message auth-success">
-                  <CheckCircle2 size={16} />
-                  <span>{message}</span>
-                </div>
-              )}
+            {message && (
+              <div className="auth-message auth-success">
+                <CheckCircle2 size={16} />
+                <span>{message}</span>
+              </div>
+            )}
 
-              <button
-                className="auth-submit"
-                type="submit"
-                disabled={loading || otp.length !== 8}
-              >
-                {loading
-                  ? "Verifying..."
-                  : "Verify email"}
-              </button>
-            </form>
+            <button
+              className="auth-submit"
+              disabled={loading}
+              type="submit"
+            >
+              {loading
+                ? "Verifying..."
+                : "Verify Email"}
+              <ArrowRight size={17} />
+            </button>
 
-            <div className="auth-resend">
-              <span>Didn't receive the code?</span>
+            <button
+              type="button"
+              className="license-link"
+              disabled={
+                resending ||
+                resendCooldown > 0 ||
+                loading
+              }
+              onClick={() => void resendCode()}
+            >
+              {resending
+                ? "Sending new code..."
+                : resendCooldown > 0
+                  ? `Resend code in ${resendCooldown}s`
+                  : "Resend verification code"}
+            </button>
 
-              <button
-                type="button"
-                onClick={handleResend}
-                disabled={resending || loading}
-              >
-                {resending ? "Sending..." : "Resend code"}
-              </button>
-            </div>
-          </>
-        )}
+            <button
+              type="button"
+              className="license-link"
+              onClick={backToForm}
+              disabled={loading || resending}
+            >
+              ← Back
+            </button>
+          </form>
 
-        <div className="auth-footer">
-          <span>Your account is secured by Supabase Auth.</span>
+          <div className="auth-footer">
+            <span className="auth-footer-dot" />
+            Lifetime access · One-time ₹100
+          </div>
         </div>
       </div>
+    );
+  }
 
-      <style>{`
-        .auth-screen {
-          min-height: 100vh;
-          width: 100%;
-          display: grid;
-          place-items: center;
-          position: relative;
-          overflow: hidden;
-          background:
-            radial-gradient(circle at 20% 20%, rgba(55, 115, 255, 0.12), transparent 32%),
-            radial-gradient(circle at 80% 75%, rgba(30, 92, 255, 0.10), transparent 34%),
-            #080a0f;
-          color: #f4f7fb;
-          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          padding: 32px 20px;
-          box-sizing: border-box;
-        }
+  /*
+   * LOGIN / SIGNUP SCREEN
+   */
+  return (
+    <div className="auth-screen">
+      <div className="auth-ambient auth-ambient-one" />
+      <div className="auth-ambient auth-ambient-two" />
 
-        .auth-ambient {
-          position: absolute;
-          width: 420px;
-          height: 420px;
-          border-radius: 50%;
-          filter: blur(90px);
-          pointer-events: none;
-          opacity: .34;
-        }
+      <div className="auth-card">
+        <div className="auth-brand">
+          <div className="auth-logo">S</div>
 
-        .auth-ambient-one {
-          background: #245cff;
-          left: -180px;
-          top: -150px;
-        }
+          <div>
+            <strong>
+              Snip <b>AI</b>
+            </strong>
+            <span>AI clipping workspace</span>
+          </div>
+        </div>
 
-        .auth-ambient-two {
-          background: #1677ff;
-          right: -190px;
-          bottom: -170px;
-        }
+        <div className="auth-heading">
+          <span className="auth-eyebrow">
+            {mode === "login"
+              ? "WELCOME BACK"
+              : "CREATE ACCOUNT"}
+          </span>
 
-        .auth-card {
-          width: min(440px, 100%);
-          position: relative;
-          z-index: 1;
-          box-sizing: border-box;
-          padding: 34px;
-          border: 1px solid rgba(255,255,255,.08);
-          border-radius: 24px;
-          background: rgba(14, 17, 24, .88);
-          box-shadow:
-            0 30px 100px rgba(0,0,0,.48),
-            inset 0 1px 0 rgba(255,255,255,.035);
-          backdrop-filter: blur(22px);
-        }
+          <h1>
+            {mode === "login"
+              ? "Welcome back."
+              : "Create your account."}
+          </h1>
 
-        .auth-brand {
-          display: flex;
-          align-items: center;
-          gap: 11px;
-          margin-bottom: 42px;
-        }
+          <p>
+            {mode === "login"
+              ? "Login with your Snip AI account."
+              : "Create your account and verify your email."}
+          </p>
+        </div>
 
-        .auth-logo {
-          width: 38px;
-          height: 38px;
-          display: grid;
-          place-items: center;
-          border-radius: 11px;
-          background: linear-gradient(145deg, #3b78ff, #1550df);
-          box-shadow: 0 8px 25px rgba(39, 101, 255, .28);
-          font-weight: 800;
-        }
+        <form
+          className="auth-form"
+          onSubmit={submit}
+        >
+          {mode === "signup" && (
+            <label className="auth-field">
+              <span>Full name</span>
 
-        .auth-brand strong {
-          display: block;
-          font-size: 14px;
-          letter-spacing: .12em;
-        }
+              <div className="auth-input-wrap">
+                <User size={17} />
 
-        .auth-brand span {
-          display: block;
-          margin-top: 2px;
-          color: #697487;
-          font-size: 10px;
-        }
+                <input
+                  value={fullName}
+                  onChange={(event) =>
+                    setFullName(event.target.value)
+                  }
+                  autoComplete="name"
+                  placeholder="Your name"
+                />
+              </div>
+            </label>
+          )}
 
-        .auth-heading {
-          margin-bottom: 28px;
-        }
+          <label className="auth-field">
+            <span>Email</span>
 
-        .auth-eyebrow {
-          color: #5e91ff;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: .16em;
-        }
+            <div className="auth-input-wrap">
+              <Mail size={17} />
 
-        .auth-heading h1 {
-          margin: 8px 0 8px;
-          font-size: 28px;
-          line-height: 1.15;
-          letter-spacing: -.03em;
-        }
+              <input
+                type="email"
+                value={email}
+                onChange={(event) =>
+                  setEmail(event.target.value)
+                }
+                autoComplete="email"
+                placeholder="you@example.com"
+              />
+            </div>
+          </label>
 
-        .auth-heading p {
-          margin: 0;
-          color: #7e899a;
-          font-size: 13px;
-          line-height: 1.6;
-        }
+          <label className="auth-field">
+            <span>Password</span>
 
-        .auth-heading p strong {
-          color: #dfe5ee;
-        }
+            <div className="auth-input-wrap">
+              <Lock size={17} />
 
-        .auth-form {
-          display: grid;
-          gap: 17px;
-        }
+              <input
+                type="password"
+                value={password}
+                onChange={(event) =>
+                  setPassword(event.target.value)
+                }
+                autoComplete={
+                  mode === "login"
+                    ? "current-password"
+                    : "new-password"
+                }
+                placeholder="At least 6 characters"
+              />
+            </div>
+          </label>
 
-        .auth-field {
-          display: grid;
-          gap: 8px;
-        }
+          {error && (
+            <div className="auth-message auth-error">
+              {error}
+            </div>
+          )}
 
-        .auth-field > span {
-          color: #aab3c1;
-          font-size: 11px;
-          font-weight: 600;
-        }
+          {message && (
+            <div className="auth-message auth-success">
+              <CheckCircle2 size={16} />
+              <span>{message}</span>
+            </div>
+          )}
 
-        .auth-input-wrap {
-          height: 46px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 0 13px;
-          border: 1px solid #252c38;
-          border-radius: 11px;
-          background: #0b0e14;
-          box-sizing: border-box;
-          transition: border-color .18s, box-shadow .18s;
-        }
+          <button
+            className="auth-submit"
+            disabled={loading}
+            type="submit"
+          >
+            {loading
+              ? "Please wait..."
+              : mode === "login"
+                ? "Login"
+                : "Create Account"}
+            <ArrowRight size={17} />
+          </button>
+        </form>
 
-        .auth-input-wrap:focus-within {
-          border-color: #356ff1;
-          box-shadow: 0 0 0 3px rgba(53,111,241,.10);
-        }
+        <div className="auth-switch">
+          <span>
+            {mode === "login"
+              ? "Don't have an account?"
+              : "Already have an account?"}
+          </span>
 
-        .auth-input-wrap svg {
-          flex: 0 0 auto;
-          color: #586477;
-        }
+          <button
+            type="button"
+            disabled={loading}
+            onClick={switchMode}
+          >
+            {mode === "login"
+              ? "Create Account"
+              : "Login"}
+          </button>
+        </div>
 
-        .auth-input-wrap input {
-          width: 100%;
-          min-width: 0;
-          border: 0;
-          outline: 0;
-          background: transparent;
-          color: #f2f5fa;
-          font-size: 13px;
-        }
-
-        .auth-input-wrap input::placeholder {
-          color: #4e5868;
-        }
-
-        .auth-submit {
-          height: 46px;
-          margin-top: 4px;
-          border: 0;
-          border-radius: 11px;
-          background: linear-gradient(135deg, #3a76ff, #1e58e6);
-          color: white;
-          font-size: 13px;
-          font-weight: 750;
-          cursor: pointer;
-          box-shadow: 0 10px 30px rgba(35, 94, 235, .22);
-          transition: transform .15s, filter .15s, opacity .15s;
-        }
-
-        .auth-submit:hover:not(:disabled) {
-          transform: translateY(-1px);
-          filter: brightness(1.08);
-        }
-
-        .auth-submit:disabled {
-          opacity: .48;
-          cursor: not-allowed;
-        }
-
-        .auth-message {
-          display: flex;
-          align-items: flex-start;
-          gap: 8px;
-          padding: 11px 12px;
-          border-radius: 10px;
-          font-size: 11px;
-          line-height: 1.5;
-        }
-
-        .auth-error {
-          border: 1px solid rgba(255, 91, 91, .16);
-          background: rgba(255, 72, 72, .07);
-          color: #ff9b9b;
-        }
-
-        .auth-success {
-          border: 1px solid rgba(64, 190, 128, .16);
-          background: rgba(64, 190, 128, .07);
-          color: #8ce0b8;
-        }
-
-        .auth-switch,
-        .auth-resend {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          gap: 6px;
-          margin-top: 22px;
-          color: #697487;
-          font-size: 11px;
-        }
-
-        .auth-switch button,
-        .auth-resend button,
-        .auth-back {
-          border: 0;
-          background: transparent;
-          color: #6e9bff;
-          font: inherit;
-          font-weight: 700;
-          cursor: pointer;
-          padding: 0;
-        }
-
-        .auth-switch button:hover,
-        .auth-resend button:hover,
-        .auth-back:hover {
-          color: #9ab9ff;
-        }
-
-        .auth-resend button:disabled,
-        .auth-back:disabled {
-          opacity: .45;
-          cursor: not-allowed;
-        }
-
-        .auth-back {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          margin-bottom: 25px;
-          font-size: 11px;
-        }
-
-        .otp-heading {
-          margin-bottom: 25px;
-        }
-
-        .auth-otp {
-          width: 100%;
-          height: 58px;
-          box-sizing: border-box;
-          border: 1px solid #252c38;
-          border-radius: 12px;
-          outline: 0;
-          background: #0b0e14;
-          color: #f5f7fb;
-          text-align: center;
-          font-size: 25px;
-          font-weight: 750;
-          letter-spacing: .48em;
-          padding-left: .48em;
-        }
-
-        .auth-otp:focus {
-          border-color: #356ff1;
-          box-shadow: 0 0 0 3px rgba(53,111,241,.10);
-        }
-
-        .auth-otp::placeholder {
-          color: #394251;
-        }
-
-        .auth-footer {
-          margin-top: 30px;
-          padding-top: 17px;
-          border-top: 1px solid rgba(255,255,255,.055);
-          text-align: center;
-          color: #4f5969;
-          font-size: 9px;
-        }
-
-        @media (max-width: 520px) {
-          .auth-card {
-            padding: 26px 22px;
-            border-radius: 20px;
-          }
-
-          .auth-brand {
-            margin-bottom: 32px;
-          }
-
-          .auth-heading h1 {
-            font-size: 25px;
-          }
-        }
-      `}</style>
+        <div className="auth-footer">
+          <span className="auth-footer-dot" />
+          Lifetime access · One-time ₹100
+        </div>
+      </div>
     </div>
   );
 }

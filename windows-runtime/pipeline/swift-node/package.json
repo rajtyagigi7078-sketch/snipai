@@ -1,0 +1,9 @@
+﻿{
+  "name": "snip-ai-swift-hinglish",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@huggingface/transformers": "4.3.1",
+    "onnxruntime-node": "^1.22.0"
+  }
+}

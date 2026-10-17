@@ -627,7 +627,7 @@ input:focus-visible {
 }
 
 /* ============================================================
-   CAPTION CAROUSEL — REAL LOCAL FONT PREVIEWS
+   CAPTION CAROUSEL â€” REAL LOCAL FONT PREVIEWS
    ============================================================ */
 
 @font-face {
@@ -1149,14 +1149,17 @@ input:focus-visible {
    ============================================================ */
 
 .processing-overlay {
-  position: absolute;
-  z-index: 100;
+  position: fixed;
+  z-index: 9999;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
-  padding: 30px;
-  background: rgba(7, 8, 11, 0.84);
-  backdrop-filter: blur(10px);
+  padding: 24px;
+  background: rgba(7, 8, 11, 0.90);
+  overflow-y: auto;
 }
 
 .processing-panel {
@@ -1224,6 +1227,36 @@ input:focus-visible {
   color: #afa3ed;
   font-size: 16px;
   font-weight: 650;
+}
+
+.processing-cancel {
+  min-height: 34px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid rgba(242, 112, 126, 0.32);
+  border-radius: 9px;
+  background: rgba(242, 112, 126, 0.075);
+  color: #f0b3bb;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.processing-cancel:hover:not(:disabled) {
+  border-color: rgba(242, 112, 126, 0.45);
+  background: rgba(242, 112, 126, 0.1);
+  color: #ffb6be;
+}
+
+.processing-cancel:disabled {
+  color: #8c8993;
+  cursor: wait;
 }
 
 .processing-progress {
@@ -1821,7 +1854,7 @@ input:focus-visible {
 }
 
 /* ============================================================
-   SNIP AI — GALLERY VIDEO PLAYBACK FIX
+   SNIP AI â€” GALLERY VIDEO PLAYBACK FIX
    Custom play overlay must not block the native video element.
    ============================================================ */
 
@@ -1846,7 +1879,7 @@ input:focus-visible {
 
 
 /* ============================================================
-   SNIP AI — CLIP SELECTION + FIXED EXPORT BAR
+   SNIP AI â€” CLIP SELECTION + FIXED EXPORT BAR
    ============================================================ */
 
 .gallery-header-actions {
@@ -2119,7 +2152,7 @@ input:focus-visible {
 }
 
 /* ============================================================
-   SNIP AI — CLIP COUNT SELECTOR
+   SNIP AI â€” CLIP COUNT SELECTOR
    ============================================================ */
 
 .clip-count-selector {
@@ -2207,7 +2240,7 @@ input:focus-visible {
 
 
 /* ============================================================
-   SNIP AI — REAL VIDEO PLAY BUTTON
+   SNIP AI â€” REAL VIDEO PLAY BUTTON
    ============================================================ */
 
 .clip-play-hint {
@@ -2280,7 +2313,7 @@ input:focus-visible {
 
 
 /* ============================================================
-   SNIP AI — LOCAL VIDEO BLOB PLAYER
+   SNIP AI â€” LOCAL VIDEO BLOB PLAYER
    ============================================================ */
 
 .clip-video-loading,
@@ -2350,7 +2383,7 @@ input:focus-visible {
 
 
 /* ============================================================
-   SNIP AI — FINAL GALLERY PREVIEW LAYOUT
+   SNIP AI â€” FINAL GALLERY PREVIEW LAYOUT
    ============================================================ */
 
 .clip-preview {
@@ -2499,7 +2532,7 @@ input:focus-visible {
 
 
 /* ============================================================
-   SNIP AI — PLAYER V2
+   SNIP AI â€” PLAYER V2
    ============================================================ */
 
 .clip-video-retry {
@@ -2531,7 +2564,7 @@ input:focus-visible {
 
 
 /* ============================================================
-   SNIP AI — STARTUP BACKGROUND
+   SNIP AI â€” STARTUP BACKGROUND
    Prevent white flash while React UI is loading.
    ============================================================ */
 
@@ -2552,7 +2585,7 @@ body {
 
 
 /* ============================================================
-   WORKSPACE PAGES — PROJECTS / TEMPLATES / HISTORY / SETTINGS
+   WORKSPACE PAGES â€” PROJECTS / TEMPLATES / HISTORY / SETTINGS
    ============================================================ */
 
 .workspace-page {
@@ -2756,7 +2789,7 @@ body {
 .settings-footer > span { display: inline-flex; align-items: center; gap: 6px; color: #555964; font-size: 8px; }
 
 /* ============================================================
-   CAPTION CAROUSEL — RELIABLE MOUSE WHEEL + BUTTON SCROLL
+   CAPTION CAROUSEL â€” RELIABLE MOUSE WHEEL + BUTTON SCROLL
    ============================================================ */
 
 .caption-card { overflow: visible; }
@@ -2783,7 +2816,7 @@ body {
 }
 
 /* ============================================================
-   SNIP AI — GLOBAL BLUE AMBIENT LIGHT
+   SNIP AI â€” GLOBAL BLUE AMBIENT LIGHT
    Stronger glass-friendly blue light, visible inside the app.
    ============================================================ */
 html,
@@ -2882,7 +2915,7 @@ body,
 }
 
 /* ============================================================
-   SNIP AI — WELCOME AFTER LOGIN / APP OPEN
+   SNIP AI â€” WELCOME AFTER LOGIN / APP OPEN
    ============================================================ */
 .welcome-overlay {
   position: fixed;
@@ -3036,7 +3069,7 @@ body,
 @keyframes welcome-glow-drift-one { from { transform: translate3d(-20px,-10px,0) scale(1); } to { transform: translate3d(55px,35px,0) scale(1.12); } }
 @keyframes welcome-glow-drift-two { from { transform: translate3d(20px,15px,0) scale(1); } to { transform: translate3d(-55px,-35px,0) scale(1.10); } }
 /* ============================================================
-   SNIP AI — FIX PROCESSING MODAL POSITION
+   SNIP AI â€” FIX PROCESSING MODAL POSITION
    ============================================================ */
 
 .processing-overlay {
@@ -3081,7 +3114,7 @@ body,
 
 
 /* ============================================================
-   SNIP AI — BILLING / SUBSCRIPTION UI
+   SNIP AI â€” BILLING / SUBSCRIPTION UI
    ============================================================ */
 
 .access-card {
@@ -3245,7 +3278,7 @@ body,
 
 
 /* ============================================================
-   SNIP AI — VISIBLE GALLERY EXPORT BUTTON
+   SNIP AI â€” VISIBLE GALLERY EXPORT BUTTON
    ============================================================ */
 
 .gallery-export-visible-button {
@@ -3283,7 +3316,7 @@ body,
 }
 
 /* ============================================================
-   SNIP AI — FIXED GALLERY ACTIONS
+   SNIP AI â€” FIXED GALLERY ACTIONS
    Create another + Export always visible
    ============================================================ */
 
@@ -3390,7 +3423,7 @@ body,
 
 
 /* ============================================================
-   SNIP AI — FIXED GALLERY ACTIONS
+   SNIP AI â€” FIXED GALLERY ACTIONS
    Rendered through React Portal directly on document.body.
    ============================================================ */
 
@@ -3530,4 +3563,975 @@ body,
 .profile-logout-button:hover {
   background: rgba(255, 255, 255, 0.08) !important;
   color: #fff !important;
+}
+
+/* ============================================================
+   SNIP AI â€” FINAL VIEWPORT / CREATE PAGE FIX
+   ============================================================ */
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.app-shell {
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.sidebar {
+  flex: 0 0 222px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.main-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  box-sizing: border-box;
+  scroll-behavior: smooth;
+}
+
+.workspace {
+  width: 100%;
+  min-width: 0;
+  min-height: min-content;
+  box-sizing: border-box;
+  padding-bottom: 32px;
+}
+
+.workspace > * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.generate-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.generation-info {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.generate-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.bottom-hint {
+  padding-bottom: 24px;
+}
+
+/* Smaller laptop / non-maximized windows */
+@media (max-height: 760px) {
+  .main-content {
+    overflow-y: auto;
+  }
+
+  .workspace {
+    padding-top: 18px;
+    padding-bottom: 40px;
+  }
+
+  .generate-row {
+    margin-top: 14px;
+    padding-bottom: 8px;
+  }
+}
+
+/* Narrow desktop window */
+@media (max-width: 1100px) {
+  .sidebar {
+    flex-basis: 200px;
+  }
+
+  .main-content {
+    overflow-x: hidden;
+  }
+
+  .generate-row {
+    align-items: stretch;
+  }
+
+  .generate-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Very small supported desktop viewport */
+@media (max-width: 900px) {
+  .sidebar {
+    flex-basis: 180px;
+  }
+
+  .workspace {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* Never let the bottom controls disappear behind the viewport */
+.workspace .generate-row,
+.workspace .bottom-hint {
+  flex-shrink: 0;
+}
+
+
+/* ============================================================
+   LIFETIME LICENSE ACTIVATION
+   ============================================================ */
+
+.license-settings-card {
+  grid-column: 1 / -1;
+}
+
+.license-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.license-key-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.35px;
+}
+
+.license-activate-button {
+  min-height: 42px;
+  flex: 0 0 auto;
+}
+
+.license-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #a7a9b5;
+  font-size: 13px;
+  padding: 14px 0;
+}
+
+.license-active-box {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 15px;
+  border: 1px solid rgba(104, 226, 157, 0.22);
+  border-radius: 12px;
+  background: rgba(52, 190, 118, 0.07);
+}
+
+.license-active-box > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.license-active-box strong,
+.license-active-box span {
+  display: block;
+}
+
+.license-active-box strong {
+  font-size: 13px;
+}
+
+.license-active-box span {
+  margin-top: 3px;
+  color: #9295a2;
+  font-size: 11px;
+}
+
+.license-active-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(104, 226, 157, 0.13);
+}
+
+.license-success,
+.license-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.license-success {
+  color: #72e5a2;
+}
+
+.license-error {
+  color: #ff8585;
+}
+
+.license-help {
+  display: block;
+  margin-top: 9px;
+  color: #777b89;
+  line-height: 1.45;
+}
+
+@media (max-width: 760px) {
+  .license-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .license-activate-button {
+    width: 100%;
+  }
+}
+
+
+/* Snip AI: compact caption-template previews */
+.remotion-template-library-preview,
+.remotion-create-template-preview {
+  width: 100%;
+  aspect-ratio: 16 / 7;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #090a0e;
+}
+
+.remotion-template-library-preview {
+  aspect-ratio: 16 / 7;
+}
+
+.remotion-create-template-preview {
+  aspect-ratio: 16 / 7;
+}
+
+.remotion-template-library-preview > *,
+.remotion-create-template-preview > * {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.remotion-create-template-card {
+  width: 138px;
+  flex: 0 0 138px;
+  padding: 6px;
+  border-radius: 12px;
+}
+
+.remotion-create-template-track {
+  gap: 10px;
+}
+
+.remotion-create-template-carousel {
+  scrollbar-width: thin;
+  scrollbar-color: #42434b transparent;
+  padding-bottom: 7px;
+}
+
+.remotion-create-template-carousel::-webkit-scrollbar {
+  height: 5px;
+}
+
+.remotion-create-template-carousel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.remotion-create-template-carousel::-webkit-scrollbar-thumb {
+  background: #42434b;
+  border-radius: 8px;
+}
+
+.remotion-create-template-carousel::-webkit-scrollbar-thumb:hover {
+  background: #656672;
+}
+
+.remotion-template-library-card {
+  border-radius: 14px;
+}
+
+.remotion-template-library-footer {
+  gap: 6px;
+}
+
+.remotion-create-template-footer {
+  min-height: 30px;
+  padding-top: 6px;
+  font-size: 11px;
+}
+
+.remotion-template-library-card.selected,
+.remotion-create-template-card.selected {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 1px #8b5cf6;
+}
+
+
+/* Real FFmpeg-generated caption preview */
+.caption-engine-preview {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #08090d;
+  position: relative;
+}
+.caption-engine-preview-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #08090d;
+}
+.caption-engine-preview-placeholder {
+  background: radial-gradient(ellipse at center, #202129 0%, #090a0e 75%);
+}
+.caption-engine-preview-copy {
+  color: rgba(255,255,255,.68);
+  font-size: 11px;
+  text-align: center;
+  padding: 10px;
+}
+
+
+
+
+/* Final bounded, readable caption previews */
+.remotion-template-library-card {
+  flex: 0 0 190px !important;
+  width: 190px !important;
+  min-width: 190px !important;
+}
+.remotion-template-library-preview,
+.remotion-create-template-preview {
+  width: 100%;
+  aspect-ratio: 16 / 7;
+  height: auto;
+  min-height: 0;
+  max-height: 92px;
+  overflow: hidden;
+}
+.remotion-create-template-card {
+  flex: 0 0 190px !important;
+  width: 190px !important;
+  min-width: 190px !important;
+}
+.caption-engine-preview,
+.caption-engine-preview-video {
+  width: 100%;
+  height: 100%;
+  max-height: 92px;
+  overflow: hidden;
+}
+.caption-engine-preview-video {
+  object-fit: cover !important;
+}
+
+/* Snip AI final caption template layout v2 */
+/* Caption template library: three complete cards per row */
+.remotion-template-library-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+}
+
+.remotion-template-library-card {
+  display: block;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100%;
+  flex: initial !important;
+  padding: 9px;
+  overflow: hidden;
+}
+
+.remotion-template-library-preview,
+.remotion-create-template-preview {
+  width: 100%;
+  aspect-ratio: 16 / 7;
+  height: auto;
+  min-height: 0;
+  max-height: 120px;
+  overflow: hidden;
+  border-radius: 9px;
+  background: #090a0e;
+}
+
+.remotion-template-library-preview > *,
+.remotion-create-template-preview > * {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.remotion-template-library-footer {
+  gap: 6px;
+  padding: 9px 3px 3px;
+}
+
+.remotion-template-library-footer strong {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.remotion-create-template-carousel {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #42434b transparent;
+  padding: 4px 2px 8px;
+}
+
+.remotion-create-template-track {
+  display: flex;
+  width: max-content;
+  gap: 10px;
+}
+
+.remotion-create-template-card {
+  width: 154px !important;
+  min-width: 154px !important;
+  flex: 0 0 154px !important;
+  padding: 7px;
+}
+
+.remotion-create-template-footer {
+  min-height: 28px;
+  padding-top: 6px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.caption-engine-preview,
+.caption-engine-preview-video {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.caption-engine-preview-video {
+  display: block;
+  object-fit: cover !important;
+}
+
+@media (max-width: 900px) {
+  .remotion-template-library-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+/* Snip AI landscape caption preview v1 */
+.remotion-template-library-preview,
+.remotion-create-template-preview {
+  aspect-ratio: 16 / 7;
+  max-height: 120px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.caption-engine-preview {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #101116;
+}
+
+.caption-engine-preview-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: fill !important;
+}
+
+/* ============================================================
+   SNIP AI — CREATE PAGE COMPACT LAYOUT
+   Scoped to the Create page; preserve other pages.
+   ============================================================ */
+
+.main-content:has(.drop-zone) {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.main-content:has(.drop-zone) > .topbar,
+.main-content:has(.drop-zone) .topbar {
+  gap: 16px;
+  padding-top: 20px;
+}
+
+.main-content:has(.drop-zone) .topbar .eyebrow {
+  margin-bottom: 5px;
+}
+
+.main-content:has(.drop-zone) .topbar h1 {
+  margin-top: 0;
+  margin-bottom: 5px;
+  font-size: clamp(22px, 2vw, 30px);
+  line-height: 1.15;
+}
+
+.main-content:has(.drop-zone) .topbar .subtitle {
+  margin-top: 0;
+  margin-bottom: 0;
+  line-height: 1.45;
+}
+
+.main-content:has(.drop-zone) .workspace {
+  margin-top: 14px;
+  padding-top: 0;
+  padding-bottom: 12px;
+}
+
+.main-content:has(.drop-zone) .drop-zone {
+  min-height: 0;
+  padding: 16px 20px;
+}
+
+.main-content:has(.drop-zone) .drop-icon {
+  width: 36px;
+  height: 36px;
+  margin-bottom: 7px;
+}
+
+.main-content:has(.drop-zone) .drop-zone > p {
+  margin-top: 5px;
+  margin-bottom: 9px;
+}
+
+.main-content:has(.drop-zone) .upload-divider {
+  margin: 5px 0;
+}
+
+.main-content:has(.drop-zone) .options-grid {
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.main-content:has(.drop-zone) .option-card {
+  padding: 11px;
+  min-width: 0;
+}
+
+.main-content:has(.drop-zone) .clip-count-selector {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+}
+
+.main-content:has(.drop-zone) .clip-count-header {
+  margin-bottom: 8px;
+}
+
+.main-content:has(.drop-zone) .clip-count-button {
+  width: 31px;
+  height: 31px;
+}
+
+.main-content:has(.drop-zone) .format-button {
+  gap: 5px;
+  padding: 7px 6px;
+}
+
+.main-content:has(.drop-zone) .format-preview {
+  width: 40px;
+  height: 31px;
+}
+
+.main-content:has(.drop-zone) .generate-row {
+  position: relative;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  padding-bottom: 0;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.main-content:has(.drop-zone) .generation-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.main-content:has(.drop-zone) .generate-button {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 38px;
+}
+
+.main-content:has(.drop-zone) .bottom-hint {
+  position: static;
+  padding: 8px 0 0;
+  margin: 0;
+}
+
+@media (max-height: 800px) {
+  .main-content:has(.drop-zone) .topbar {
+    padding-top: 12px;
+  }
+
+  .main-content:has(.drop-zone) .workspace {
+    margin-top: 9px;
+    padding-bottom: 8px;
+  }
+
+  .main-content:has(.drop-zone) .drop-zone {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+
+  .main-content:has(.drop-zone) .options-grid {
+    margin-top: 7px;
+    gap: 8px;
+  }
+
+  .main-content:has(.drop-zone) .option-card {
+    padding: 9px;
+  }
+
+  .main-content:has(.drop-zone) .generate-row {
+    margin-top: 7px;
+  }
+
+  .main-content:has(.drop-zone) .bottom-hint {
+    padding-top: 5px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .main-content:has(.drop-zone) .generate-row {
+    flex-wrap: wrap;
+  }
+
+  .main-content:has(.drop-zone) .generate-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* End Create page compact layout */
+/* SNIP AI — matching blue card finish */
+.main-content:has(.drop-zone) .options-grid > .option-card {
+  background:
+    radial-gradient(
+      ellipse at 50% 0%,
+      rgba(43, 91, 153, 0.13) 0%,
+      rgba(20, 36, 61, 0.07) 42%,
+      transparent 76%
+    ),
+    linear-gradient(
+      145deg,
+      rgba(17, 25, 39, 0.96),
+      rgba(14, 16, 24, 0.98)
+    );
+  border-color: rgba(103, 139, 190, 0.17);
+  box-shadow:
+    inset 0 1px 0 rgba(190, 211, 255, 0.035),
+    0 0 22px rgba(34, 83, 145, 0.035);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.main-content:has(.drop-zone) .options-grid > .option-card:hover {
+  border-color: rgba(103, 139, 190, 0.27);
+  box-shadow:
+    inset 0 1px 0 rgba(190, 211, 255, 0.045),
+    0 0 24px rgba(34, 83, 145, 0.065);
+}
+
+
+
+/* SNIP AI — targeted sidebar and welcome polish */
+.sidebar .nav-item {
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.sidebar .brand {
+  font-family: inherit;
+  font-weight: 700;
+}
+
+.sidebar .sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.sidebar .sidebar-bottom > .nav-item {
+  flex: 0 0 auto;
+}
+
+.sidebar .profile {
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 8px;
+  min-width: 0;
+  padding: 8px 8px 2px;
+}
+
+.sidebar .profile .avatar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.sidebar .profile .profile-info {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.sidebar .profile .profile-info strong,
+.sidebar .profile .profile-info span {
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.sidebar .profile .profile-logout-button {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  justify-self: stretch;
+  width: 100%;
+  min-height: 30px;
+  margin: 0;
+  font-family: inherit;
+  font-weight: 700;
+}
+
+.language-detection-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  font-size: 11px;
+}
+
+.language-detection-note span {
+  color: #858995;
+}
+
+.language-detection-note strong {
+  color: #c7bbff;
+  font-weight: 700;
+}
+
+.language-detection-note label {
+  color: #858995;
+}
+
+.language-detection-note select {
+  max-width: 70%;
+  padding: 5px 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  background: #20212a;
+  color: #c7bbff;
+  font: inherit;
+}
+
+.welcome-modal h2 {
+  font-family: inherit;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+.welcome-modal p,
+.welcome-continue-button {
+  font-family: inherit;
+}
+
+.welcome-continue-button {
+  font-weight: 700;
+}
+/* End targeted polish */
+
+/* Compact language control beneath Video format selection */
+.main-content:has(.drop-zone) .options-grid {
+  align-items: stretch;
+}
+
+.main-content:has(.drop-zone) .option-card:not(.caption-card) .language-detection-note {
+  margin-top: 10px;
+  padding: 7px 9px;
+  min-height: 32px;
+  font-size: 10px;
+}
+
+.main-content:has(.drop-zone) .option-card:not(.caption-card) .language-detection-note strong {
+  font-size: 10px;
+}
+
+/* Processing overlay: prevent parent filters from trapping fixed positioning */
+.main-content:has(.processing-overlay) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.main-content:has(.processing-overlay) .processing-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 24px !important;
+  box-sizing: border-box !important;
+}
+
+/* SNIP AI — matching upload panel finish */
+.main-content:has(.drop-zone) .drop-zone {
+  background:
+    radial-gradient(
+      ellipse at 50% 0%,
+      rgba(43, 91, 153, 0.14) 0%,
+      rgba(20, 36, 61, 0.07) 44%,
+      transparent 78%
+    ),
+    linear-gradient(
+      145deg,
+      rgba(17, 25, 39, 0.96),
+      rgba(14, 16, 24, 0.98)
+    );
+  border-color: rgba(103, 139, 190, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(190, 211, 255, 0.045),
+    0 0 24px rgba(34, 83, 145, 0.045);
+}
+
+.main-content:has(.drop-zone) .drop-zone:hover,
+.main-content:has(.drop-zone) .drop-zone.dragging {
+  border-color: rgba(125, 158, 211, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(190, 211, 255, 0.06),
+    0 0 28px rgba(34, 83, 145, 0.09);
+}
+/* SNIP AI FULL-WINDOW PROCESSING OVERLAY FIX */
+.processing-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  z-index: 2147483000 !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 24px !important;
+  margin: 0 !important;
+}
+
+.processing-overlay .processing-panel,
+.processing-overlay .complete-panel {
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+  .processing-overlay {
+    padding: 14px !important;
+  }
+}
+/* END FULL-WINDOW PROCESSING OVERLAY FIX */
+
+
+
+/* Keep processing diagnostics readable when subprocess logs are returned. */
+.processing-error span {
+  max-height: 230px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 9px;
+}
+
+/* Leave breathing room around the bottom-right desktop overlay and keep UI glass from softening text. */
+.sidebar,
+.main-content {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.main-content:has(.drop-zone) .generate-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding-right: 112px;
+}
+
+.main-content:has(.drop-zone) .generation-info {
+  flex: 0 1 400px;
+}
+
+.main-content:has(.drop-zone) .workspace {
+  padding-bottom: 32px;
+}
+
+@media (max-width: 1100px) {
+  .main-content:has(.drop-zone) .generate-row {
+    padding-right: 0;
+  }
+
+  .main-content:has(.drop-zone) .generation-info {
+    flex-basis: 100%;
+  }
 }

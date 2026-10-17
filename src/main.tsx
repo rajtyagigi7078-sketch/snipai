@@ -1,70 +1,30 @@
-import React, {
-  useEffect,
-  useState,
-} from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import type { Session } from "@supabase/supabase-js";
-import { listen } from "@tauri-apps/api/event";
-
 import App from "./App";
 import AuthScreen from "./AuthScreen";
-import PaymentGate from "./PaymentGate";
-import CashfreeCheckout from "./CashfreeCheckout";
-import CashfreeReturn from "./CashfreeReturn";
-import {
-  getBillingState,
-} from "./lib/billing";
+import LicenseActivationScreen from "./LicenseActivationScreen";
 import { supabase } from "./lib/supabase";
-import { startPaymentReturnHandler } from "./lib/paymentReturn";
+import { getLifetimeLicenseState } from "./lib/license";
 
-void startPaymentReturnHandler();
-
-async function handleAuthUrl(
-  url: string,
-) {
-  console.log(
-    "Snip AI auth URL received:",
-    url,
+function LoadingScreen({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "grid",
+        placeItems: "center",
+        background: "#080a0f",
+        color: "#7d8798",
+      }}
+    >
+      {message}
+    </div>
   );
-
-  try {
-    const parsed = new URL(url);
-
-    const accessToken =
-      parsed.searchParams.get(
-        "access_token",
-      );
-
-    const refreshToken =
-      parsed.searchParams.get(
-        "refresh_token",
-      );
-
-    if (
-      accessToken &&
-      refreshToken
-    ) {
-      const { error } =
-        await supabase.auth.setSession({
-          access_token:
-            accessToken,
-          refresh_token:
-            refreshToken,
-        });
-
-      if (error) {
-        console.error(
-          "Could not restore Supabase session:",
-          error,
-        );
-      }
-    }
-  } catch (error) {
-    console.error(
-      "Invalid Snip AI auth URL:",
-      error,
-    );
-  }
 }
 
 function Root() {
@@ -74,183 +34,219 @@ function Root() {
   const [loading, setLoading] =
     useState(true);
 
-  const [billingLoading, setBillingLoading] =
+  const [licenseLoading, setLicenseLoading] =
     useState(false);
 
-  const [lifetimeActive, setLifetimeActive] =
+  const [licenseActive, setLicenseActive] =
     useState(false);
 
-  async function refreshBilling() {
-    setBillingLoading(true);
+  const [licenseCheckError, setLicenseCheckError] =
+    useState(false);
+
+  async function refreshLicense() {
+    setLicenseLoading(true);
+    setLicenseCheckError(false);
 
     try {
-      const billing =
-        await getBillingState();
+      const state =
+        await getLifetimeLicenseState();
 
-      setLifetimeActive(
-        Boolean(billing.active),
-      );
+      setLicenseActive(state.active);
     } catch (error) {
       console.error(
-        "[Billing] Could not load billing state:",
+        "[License] Failed to check lifetime license:",
         error,
       );
 
-      setLifetimeActive(false);
+      setLicenseActive(false);
+      setLicenseCheckError(true);
     } finally {
-      setBillingLoading(false);
+      setLicenseLoading(false);
     }
+  }
+
+  function handleLicenseActivated() {
+    setLicenseActive(true);
+    setLicenseCheckError(false);
+    setLicenseLoading(false);
+  }
+
+  async function handleBackToLogin() {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      throw new Error(error.message || "Could not return to login.");
+    }
+
+    setSession(null);
+    setLicenseActive(false);
+    setLicenseLoading(false);
+    setLicenseCheckError(false);
   }
 
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        if (!mounted) return;
+    async function loadSession() {
+      const {
+        data,
+        error,
+      } = await supabase.auth.getSession();
 
+      if (!mounted) return;
+
+      if (error) {
+        console.error(
+          "[Auth] Failed to get session:",
+          error,
+        );
+
+        setSession(null);
+        setLicenseLoading(false);
+      } else {
         setSession(data.session);
-        setLoading(false);
-      });
+
+        if (data.session) {
+          /*
+           * Every authenticated session gets one license check.
+           */
+          void refreshLicense();
+        } else {
+          setLicenseLoading(false);
+        }
+      }
+
+      setLoading(false);
+    }
+
+    void loadSession();
 
     const {
-      data: {
-        subscription,
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        if (!mounted) return;
+
+        setSession(nextSession);
+
+        if (!nextSession) {
+          setLicenseActive(false);
+          setLicenseLoading(false);
+          setLicenseCheckError(false);
+          return;
+        }
+
+        /*
+         * New login / OTP verification.
+         * Check license after authentication.
+         */
+        void refreshLicense();
       },
-    } =
-      supabase.auth.onAuthStateChange(
-        (_event, nextSession) => {
-          setSession(nextSession);
-
-          if (!nextSession) {
-            setLifetimeActive(false);
-          }
-
-          setLoading(false);
-        },
-      );
-
-    const unlistenPromise =
-      listen<string>(
-        "snipai://auth/callback",
-        async (event) => {
-          await handleAuthUrl(
-            event.payload,
-          );
-        },
-      );
-
-
+    );
 
     return () => {
       mounted = false;
-
       subscription.unsubscribe();
-
-      unlistenPromise.then(
-        (unlisten) => {
-          unlisten();
-        },
-      );
     };
   }, []);
 
-  useEffect(() => {
-    if (!session) {
-      setLifetimeActive(false);
-      return;
-    }
-
-    refreshBilling();
-  }, [session?.user?.id]);
-
   if (loading) {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          background: "#080a0f",
-          color: "#7d8798",
-          fontFamily:
-            "system-ui, sans-serif",
-          fontSize: "13px",
-        }}
-      >
-        Loading Snip AI...
-      </div>
-    );
-  }
-
-  if (!session) {
-    return <AuthScreen />;
-  }
-
-  if (billingLoading) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          background: "#080a0f",
-          color: "#7d8798",
-          fontFamily:
-            "system-ui, sans-serif",
-          fontSize: "13px",
-        }}
-      >
-        Checking account access...
-      </div>
-    );
-  }
-
-  if (!lifetimeActive) {
-    return (
-      <PaymentGate
-        onActivated={() => {
-          setLifetimeActive(true);
-        }}
+      <LoadingScreen
+        message="Loading Snip AI..."
       />
     );
   }
 
+  /*
+   * STEP 1:
+   * No authenticated account.
+   */
+  if (!session) {
+    return <AuthScreen />;
+  }
+
+  /*
+   * STEP 2:
+   * Authentication exists.
+   * Check lifetime license.
+   */
+  if (licenseLoading) {
+    return (
+      <LoadingScreen
+        message="Checking lifetime access..."
+      />
+    );
+  }
+
+  /*
+   * License lookup itself failed.
+   * Don't pretend the account is unlicensed.
+   */
+  if (licenseCheckError) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          background: "#080a0f",
+          color: "#7d8798",
+          padding: 24,
+          textAlign: "center",
+        }}
+      >
+        <div>
+          <div style={{ marginBottom: 12 }}>
+            Could not verify your lifetime access.
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void refreshLicense()}
+            style={{
+              border: "1px solid #293241",
+              borderRadius: 10,
+              background: "#11151d",
+              color: "#ffffff",
+              padding: "10px 16px",
+              cursor: "pointer",
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /*
+   * STEP 3:
+   * Account exists and is authenticated,
+   * but lifetime license has not been activated.
+   *
+   * NEVER sign out here.
+   */
+  if (!licenseActive) {
+    return (
+      <LicenseActivationScreen
+        onLicenseActivated={handleLicenseActivated}
+        onBackToLogin={handleBackToLogin}
+      />
+    );
+  }
+
+  /*
+   * STEP 4:
+   * Authenticated + lifetime license active.
+   */
   return <App />;
 }
 
-
-function HostedPaymentRouter() {
-  const path =
-    window.location.pathname.replace(
-      /\/+$/,
-      "",
-    );
-
-  if (
-    path ===
-    "/payment/cashfree-checkout"
-  ) {
-    return <CashfreeCheckout />;
-  }
-
-  if (
-    path ===
-    "/payment/cashfree-return"
-  ) {
-    return <CashfreeReturn />;
-  }
-
-  return <Root />;
-}
-
 ReactDOM.createRoot(
-  document.getElementById(
-    "root",
-  ) as HTMLElement,
+  document.getElementById("root") as HTMLElement,
 ).render(
   <React.StrictMode>
-    <HostedPaymentRouter />
+    <Root />
   </React.StrictMode>,
 );

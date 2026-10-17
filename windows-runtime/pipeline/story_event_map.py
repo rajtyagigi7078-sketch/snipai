@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 
@@ -364,6 +365,42 @@ def seg_text(segment):
     ).strip()
 
 
+# Optional Hindi/Hinglish romanization signals for model benchmarks.
+# Enabled only by SNIP_AI_HINGLISH_EVENT_SCORING=1.
+HINGLISH_HOOK_WORDS = {
+    "dekho", "suno", "socho", "kyun", "kaise", "lekin", "achanak",
+    "aakhir", "akhir", "batao", "waah", "arey", "ruko",
+}
+HINGLISH_CONFLICT_WORDS = {
+    "maara", "maar", "pakda", "pakad", "chori", "chor", "shikaar",
+    "dushman", "ladai", "ladaai", "jhagda", "takkar", "hamla",
+    "attack", "bhaaga", "bhaga",
+}
+HINGLISH_ACTION_WORDS = {
+    "pakda", "pakad", "mila", "mil", "nikla", "nikli", "nikal",
+    "chhupa", "chhup", "dhund", "dhoond", "jeeta", "jeeti", "jeet",
+    "haara", "hara", "bachaya", "bacha", "kharida", "kharid",
+    "ghusa", "ghusi", "giraya", "gira", "shuru", "khatam",
+}
+HINGLISH_PAYOFF_WORDS = {
+    "jeeta", "jeeti", "jeet", "haara", "hara", "khatam", "aakhir",
+    "akhir", "bachaya", "milgaya", "milgayi", "nikalgaya", "nikalgayi",
+}
+HINGLISH_SETUP_PHRASES = [
+    "maine socha", "agar main", "agar hum", "ek challenge", "is challenge",
+    "shart lagayi", "jab tak", "das hazaar", "sau log", "100 logo",
+]
+HINGLISH_ESCALATION_PHRASES = [
+    "aur bhi", "ab kya", "ab tak", "aakhri", "last minute", "dobara",
+    "sirf ek", "sirf ek hi", "phir se",
+]
+HINGLISH_PAYOFF_PHRASES = [
+    "mil gaya", "mil gayi", "pakad liya", "jeet gaya", "jeet gayi",
+    "haar gaya", "haar gayi", "nikal gaya", "nikal gayi", "pata chala",
+    "raaz khula", "khatam ho gaya", "khatam ho gayi",
+]
+
+
 # ============================================================
 # EVENT SCORING
 # ============================================================
@@ -416,6 +453,16 @@ def score_event(text):
         for word in words
         if word in QUESTION_WORDS
     )
+
+    if os.environ.get("SNIP_AI_HINGLISH_EVENT_SCORING", "").strip().lower() in {"1", "true", "yes", "on"}:
+        hook += sum(1 for word in words if word in HINGLISH_HOOK_WORDS)
+        conflict += sum(1 for word in words if word in HINGLISH_CONFLICT_WORDS)
+        action += sum(1 for word in words if word in HINGLISH_ACTION_WORDS)
+        payoff += sum(1 for word in words if word in HINGLISH_PAYOFF_WORDS)
+        setup += phrase_count(normalized, HINGLISH_SETUP_PHRASES)
+        escalation += phrase_count(normalized, HINGLISH_ESCALATION_PHRASES)
+        payoff_signal += phrase_count(normalized, HINGLISH_PAYOFF_PHRASES)
+        question += sum(1 for word in words if word in {"kya", "kyun", "kaise", "kab", "kaun"})
 
     score = 0.0
 
@@ -1884,7 +1931,7 @@ def main():
 
         print(
             f'#{index:02} | '
-            f'{clip["start"]:.2f}s → '
+            f'{clip["start"]:.2f}s -> '
             f'{clip["end"]:.2f}s | '
             f'{clip["duration"]:.1f}s | '
             f'Q {clip["score"]:.1f} | '

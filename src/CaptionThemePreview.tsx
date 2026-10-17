@@ -1,155 +1,147 @@
-import React, {
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
-import { Player } from "@remotion/player";
-import { AbsoluteFill } from "remotion";
+type Props = { theme: string };
 
-import {
-  CaptionTheme,
-  type CaptionsData,
-} from "remotion-captions-themes";
+const previewCache = new Map<string, string>();
+const previewRequests = new Map<string, Promise<string>>();
 
-type Props = {
-  theme: string;
-};
+let previewQueue: Promise<unknown> = Promise.resolve();
 
-const previewData: CaptionsData = {
-  lines: [
-    {
-      words: [
-        { text: "THIS", start: 0.15, end: 0.65 },
-        { text: "IS", start: 0.7, end: 1.05 },
-        { text: "SNIP", start: 1.1, end: 1.8 },
-        { text: "AI", start: 1.85, end: 2.35 },
-      ],
-    },
-  ],
-};
+function queuedRender(theme: string): Promise<string> {
+  const cached = previewCache.get(theme);
+  if (cached) return Promise.resolve(cached);
 
-const PreviewComposition: React.FC<Props> = ({
-  theme,
-}) => (
-  <AbsoluteFill
-    style={{
-      background:
-        "linear-gradient(145deg, #15161d, #08090d)",
-      overflow: "hidden",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-    }}
-  >
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        overflow: "hidden",
-      }}
-    >
-      <CaptionTheme
-        data={previewData}
-        theme={theme}
-        primaryColor="#ffffff"
-        secondaryColor="#ffff00"
-        fontSize={80}
-      />
-    </div>
-  </AbsoluteFill>
-);
+  const existing = previewRequests.get(theme);
+  if (existing) return existing;
 
-export default function CaptionThemePreview({
-  theme,
-}: Props) {
-  const containerRef =
-    useRef<HTMLDivElement | null>(null);
+  const job = previewQueue.then(() =>
+    invoke<string>("render_caption_preview", { theme }),
+  );
 
-  const [visible, setVisible] = useState(false);
+  previewQueue = job.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  const request = job
+    .then((path) => {
+      previewCache.set(theme, path);
+      return path;
+    })
+    .finally(() => {
+      previewRequests.delete(theme);
+    });
+
+  previewRequests.set(theme, request);
+  return request;
+}
+
+export default function CaptionThemePreview({ theme }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const [previewPath, setPreviewPath] = useState(
+    () => previewCache.get(theme) ?? "",
+  );
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    let started = false;
+
+    setPreviewPath(previewCache.get(theme) ?? "");
+    setError(false);
+
+    const startRendering = () => {
+      if (started || cancelled || previewCache.has(theme)) {
+        if (previewCache.has(theme)) {
+          setPreviewPath(previewCache.get(theme) ?? "");
+        }
+        return;
+      }
+
+      started = true;
+      setLoading(true);
+
+      void queuedRender(theme)
+        .then((path) => {
+          if (!cancelled) setPreviewPath(path);
+        })
+        .catch((reason) => {
+          console.error("Caption preview render failed:", theme, reason);
+          if (!cancelled) setError(true);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
     const element = containerRef.current;
 
-    if (!element) {
-      return;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      startRendering();
+    } else {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            startRendering();
+            observer.disconnect();
+          }
+        },
+        {
+          root: null,
+          rootMargin: "80px",
+          threshold: 0.01,
+        },
+      );
+
+      observer.observe(element);
+
+      return () => {
+        cancelled = true;
+        observer.disconnect();
+      };
     }
-
-    if (!("IntersectionObserver" in window)) {
-      setVisible(true);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-
-        if (entry?.isIntersecting) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
-      {
-        root: null,
-        rootMargin: "200px",
-        threshold: 0.01,
-      },
-    );
-
-    observer.observe(element);
 
     return () => {
-      observer.disconnect();
+      cancelled = true;
     };
-  }, []);
+  }, [theme]);
+
+  if (previewPath) {
+    return (
+      <div
+        ref={containerRef}
+        className="caption-engine-preview"
+      >
+        <video
+          ref={videoRef}
+          className="caption-engine-preview-video"
+          src={convertFileSrc(previewPath)}
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+        />
+      </div>
+    );
+  }
 
   return (
     <div
       ref={containerRef}
-      style={{
-        width: "100%",
-        height: "100%",
-        overflow: "hidden",
-        background:
-          "linear-gradient(145deg, #15161d, #08090d)",
-      }}
+      className="caption-engine-preview caption-engine-preview-placeholder"
     >
-      {visible ? (
-        <Player
-          component={PreviewComposition}
-          inputProps={{ theme }}
-          durationInFrames={90}
-          fps={30}
-          compositionWidth={1080}
-          compositionHeight={1080}
-          controls={false}
-          autoPlay
-          loop
-          style={{
-            width: "100%",
-            height: "100%",
-          }}
-        />
-      ) : (
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#777",
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: 0.5,
-          }}
-        >
-          Loading preview…
-        </div>
-      )}
+      <div className="caption-engine-preview-copy">
+        {loading
+          ? "Preparing preview…"
+          : error
+            ? "Preview failed — check renderer"
+            : "Preview loads when visible"}
+      </div>
     </div>
   );
 }

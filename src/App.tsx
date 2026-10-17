@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import CaptionThemePreview from "./CaptionThemePreview";
 import "./App.css";
 
@@ -24,43 +24,49 @@ import {
   Sparkles,
   Upload,
   WandSparkles,
+  X,
 } from "lucide-react";
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { supabase } from "./lib/supabase";
 
-import {
-  getBillingState,
-  startLifetimePayment,
-  type BillingState,
-} from "./lib/billing";
+import LicenseActivation from "./LicenseActivation";
 
 type Format = "1:1" | "16:9";
 
-const REMOTION_CAPTION_THEMES = [
-  { name: "pop", label: "Pop", description: "Clean popup animation with scaling and bounce." },
-  { name: "karaoke", label: "Karaoke", description: "Smooth karaoke-style highlight sweep." },
-  { name: "hustle", label: "Hustle", description: "Energetic, fast-paced kinetic entrance." },
-  { name: "grape", label: "Grape", description: "Rounded purple/accent boxed caption style." },
-  { name: "beast", label: "Beast", description: "Bold highlighted style with high-contrast shadows." },
-  { name: "poppin", label: "Poppin", description: "Vibrant uppercase Poppins font theme." },
-  { name: "aarit", label: "Aarit", description: "Cinematic letter-by-letter zoom and gradient sweep." },
-  { name: "soft-ai", label: "Soft AI", description: "Frosted glass and blur-in caption typography." },
-  { name: "gaming-stream", label: "Gaming Stream", description: "Neon glowing gaming typography." },
-  { name: "simple-one-word", label: "Simple One Word", description: "Clean, single-word focal-point highlight." },
-  { name: "kinetic-01", label: "Kinetic 01", description: "Advanced calculated kinetic typography." },
-  { name: "kinetic-02", label: "Kinetic 02", description: "Advanced kinetic caption theme." },
-  { name: "podcast", label: "Podcast", description: "Podcast-focused caption theme." },
+const CAPTION_STYLES = [
+  { name: "pop", label: "Pop", description: "Word-by-word pop with a quick scale-up." },
+  { name: "bold-center", label: "Bold Center", description: "One bold word at a time, centered and static." },
+  { name: "bounce", label: "Steady Highlight", description: "Pink active-word highlight with a soft fade; captions stay anchored." },
+  { name: "highlight-box", label: "Teal Highlight Box", description: "White active word on a deep teal highlight." },
+  { name: "karaoke", label: "Karaoke", description: "League Spartan; each spoken word instantly fills with electric cyan." },
+  { name: "minimal", label: "Minimal Fade", description: "One clean word at a time with a gentle fade and no position changes." },
+  { name: "podcast", label: "Podcast", description: "A fixed dark word panel; yellow color follows the spoken word without movement." },
+  { name: "typewriter", label: "Typewriter", description: "Retro condensed Teko lettering revealed character by character." },
+  { name: "kinetic", label: "Kinetic", description: "Oswald two-line groups with steady cyan word highlighting and no vertical movement." },
+  { name: "punch", label: "Punch", description: "Comic-book stamp motion, directional slide, and alternating neon red/yellow words." },
+  { name: "yellow-stack", label: "Sunny Stack", description: "Bold yellow two-line captions, like your first reference." },
+  { name: "violet-pill", label: "Violet Pill", description: "White words with a violet active-word pill." },
+  { name: "dual-line", label: "Dual-Line Lyric", description: "A bold gold line followed by the next line in a softer contrasting style." },
+  { name: "bold-karaoke", label: "Reel Karaoke", description: "Compact uppercase captions; the yellow active word fades in without popping." },
+  { name: "soft-lyric", label: "Soft Lyric", description: "Smaller centered lyrics with a gentle fade and no bouncing." },
 ] as const;
 
 type CaptionThemeName =
-  (typeof REMOTION_CAPTION_THEMES)[number]["name"];
+  (typeof CAPTION_STYLES)[number]["name"];
 
 function isCaptionThemeName(value: string): value is CaptionThemeName {
-  return REMOTION_CAPTION_THEMES.some((item) => item.name === value);
+  return CAPTION_STYLES.some((item) => item.name === value);
 }
+
+const captionProcessingStages = [
+  { title: "Transcribing audio", description: "Creating word timings locally with Whisper", icon: Captions },
+  { title: "Rendering captions", description: "Applying the selected FFmpeg caption style", icon: WandSparkles },
+  { title: "Validating full video", description: "Checking the completed captioned file", icon: Check },
+];
 
 const processingStages = [
   {
@@ -208,7 +214,7 @@ function LocalVideoPreview({
     return (
       <div className="clip-video-loading">
         <div className="clip-video-loading-spinner" />
-        <span>Loading preview…</span>
+        <span>Loading previewâ€¦</span>
       </div>
     );
   }
@@ -289,8 +295,7 @@ const downloadAnimationStyle = `
 `;
 
 
-type WorkspacePage = "create" | "projects" | "templates" | "history" | "settings";
-
+type WorkspacePage = "auto-clipping" | "auto-caption" | "projects" | "templates" | "history" | "settings";
 type GenerationRecord = {
   id: string;
   createdAt: string;
@@ -299,6 +304,7 @@ type GenerationRecord = {
   template: string;
   clipCount: number;
   paths: string[];
+  kind?: "clips" | "caption";
 };
 
 const HISTORY_STORAGE_KEY = "snip-ai-generation-history-v1";
@@ -367,7 +373,7 @@ function ProjectsPage({
               <div className="project-card-icon"><Film size={19} /></div>
               <div className="project-card-main">
                 <strong>{record.videoName || "Untitled video"}</strong>
-                <span>{record.clipCount} clips · {record.format} · {record.template}</span>
+                <span>{record.clipCount} clips Â· {record.format} Â· {record.template}</span>
                 <small>{formatHistoryDate(record.createdAt)}</small>
               </div>
               <div className="project-card-actions">
@@ -398,16 +404,16 @@ function TemplatesPage({
           <p className="eyebrow">TEMPLATES</p>
           <h1>Caption templates.</h1>
           <p className="subtitle">
-            Browse all Remotion caption styles and choose the active design for your next generation.
+            Browse all FFmpeg caption styles and choose the active design for your next generation.
           </p>
         </div>
         <div className="page-header-badge">
-          <LayoutTemplate size={15} /> {REMOTION_CAPTION_THEMES.length} styles
+          <LayoutTemplate size={15} /> {CAPTION_STYLES.length} styles
         </div>
       </div>
 
       <div className="remotion-template-library-grid">
-        {REMOTION_CAPTION_THEMES.map((item) => (
+        {CAPTION_STYLES.map((item) => (
           <button
             key={item.name}
             type="button"
@@ -438,13 +444,13 @@ function TemplatesPage({
         <div>
           <strong>
             Selected:{" "}
-            {REMOTION_CAPTION_THEMES.find((item) => item.name === template)?.label ?? template}
+            {CAPTION_STYLES.find((item) => item.name === template)?.label ?? template}
           </strong>
-          <span>This exact Remotion theme will be used when you generate clips.</span>
+          <span>This caption style will be used when you generate clips. The preview is illustrative; final video timing and effects are rendered by FFmpeg.</span>
         </div>
 
         <button type="button" className="generate-button" onClick={onUse}>
-          <Sparkles size={17} /> Use in Create <span className="button-arrow">→</span>
+          <Sparkles size={17} /> Use in Create
         </button>
       </div>
     </section>
@@ -487,7 +493,7 @@ function HistoryPage({
               <div className="history-index">{String(index + 1).padStart(2, "0")}</div>
               <div className="history-main">
                 <strong>{record.videoName || "Untitled video"}</strong>
-                <span>{formatHistoryDate(record.createdAt)} · {record.clipCount} clips · {record.format} · {record.template}</span>
+                 <span>{formatHistoryDate(record.createdAt)} Â· {record.clipCount} clips Â· {record.format} Â· {record.template}</span>
               </div>
               <div className="history-actions">
                 <button type="button" className="secondary-page-button" onClick={() => onOpenRecord(record)}><Play size={14} /> Preview</button>
@@ -548,7 +554,7 @@ function SettingsPage({
             <div className="settings-info-note">
               <LayoutTemplate size={16} />
               <div>
-                <strong>Remotion caption themes</strong>
+                <strong>FFmpeg caption styles</strong>
                 <span>The selected caption theme is used consistently for generated clips.</span>
               </div>
             </div>
@@ -559,15 +565,15 @@ function SettingsPage({
           <div className="settings-card-title"><div className="settings-card-icon"><Sparkles size={17} /></div><div><strong>Welcome message</strong><span>Customize the message shown when Snip AI opens.</span></div></div>
 
           <label className="settings-label">Main message</label>
-          <input className="welcome-settings-input" value={welcomeTitle} maxLength={42} onChange={(event) => setWelcomeTitle(event.target.value)} placeholder="Welcome master" />
+          <input className="welcome-settings-input" value={welcomeTitle} maxLength={42} onChange={(event) => setWelcomeTitle(event.target.value)} placeholder="Welcome to Snip AI" />
 
           <label className="settings-label">Today's plan line</label>
-          <input className="welcome-settings-input" value={welcomeSubtitle} maxLength={70} onChange={(event) => setWelcomeSubtitle(event.target.value)} placeholder="Aaj ka kya plan hai?" />
+          <input className="welcome-settings-input" value={welcomeSubtitle} maxLength={70} onChange={(event) => setWelcomeSubtitle(event.target.value)} placeholder="Ready to create your next clips?" />
 
           <div className="welcome-settings-preview">
             <span>PREVIEW</span>
-            <strong>{welcomeTitle || "Welcome master"}</strong>
-            <p>{welcomeSubtitle || "Aaj ka kya plan hai?"}</p>
+            <strong>{welcomeTitle || "Welcome to Snip AI"}</strong>
+            <p>{welcomeSubtitle || "Ready to create your next clips?"}</p>
           </div>
         </div>
 
@@ -577,6 +583,8 @@ function SettingsPage({
           <div className="storage-path-box"><span>Downloaded YouTube videos</span><strong>~/Downloads/Snip AI Downloads</strong><small>Downloaded source videos stay on this computer.</small></div>
         </div>
       </div>
+
+      <LicenseActivation />
 
       <div className="settings-footer"><span><ShieldCheck size={14} /> Settings are stored locally on this device.</span><button type="button" className="ghost-page-button" onClick={onReset}>Reset defaults</button></div>
     </section>
@@ -641,6 +649,7 @@ function App() {
     }
   });
   const [template, setTemplate] = useState<CaptionThemeName>("pop");
+  const [audioLanguage, setAudioLanguage] = useState<"english" | "hinglish">("hinglish");
   const [differentCaptions] = useState(() => {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -653,10 +662,14 @@ function App() {
   const [dragging, setDragging] = useState(false);
   const [youtubeLink, setYoutubeLink] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
+  const downloadInFlightRef = useRef(false);
   const [videoName, setVideoName] = useState("");
   const [videoPath, setVideoPath] = useState("");
+  const videoPathRef = useRef("");
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCanceling, setIsCanceling] = useState(false);
+  const cancelRequestedRef = useRef(false);
   const [requestedClips, setRequestedClips] = useState(() => {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -669,6 +682,7 @@ function App() {
   const [processingProgress, setProcessingProgress] =
     useState(0);
   const [processingStage, setProcessingStage] = useState(0);
+  const [processingDetail, setProcessingDetail] = useState("");
 
   const [processingComplete, setProcessingComplete] =
     useState(false);
@@ -679,6 +693,8 @@ function App() {
 
   const [errorMessage, setErrorMessage] = useState("");
   const [showGallery, setShowGallery] = useState(false);
+  const [outputKind, setOutputKind] = useState<"clips" | "caption">("clips");
+  const activeProcessingStages = outputKind === "caption" ? captionProcessingStages : processingStages;
   const [playingClip, setPlayingClip] = useState<number | null>(
     null,
   );
@@ -690,26 +706,7 @@ function App() {
   const [isExporting, setIsExporting] = useState(false);
 
   // ----------------------------------------------------------
-  // BILLING STATE
-  // ----------------------------------------------------------
-
-  const [billing, setBilling] =
-    useState<BillingState>({
-      active: false,
-      status: null,
-      priceInr: 100,
-      planName: "Snip AI Lifetime",
-      isAdmin: false,
-    });
-
-  const [billingLoading, setBillingLoading] =
-    useState(true);
-
-  const [billingBusy, setBillingBusy] =
-    useState(false);
-
-
-  const [workspacePage, setWorkspacePage] = useState<WorkspacePage>("create");
+  const [workspacePage, setWorkspacePage] = useState<WorkspacePage>("auto-clipping");
   const [historyRecords, setHistoryRecords] = useState<GenerationRecord[]>(() => readStoredHistory());
   const [defaultFormat, setDefaultFormat] = useState<Format>(() => {
     try {
@@ -732,9 +729,9 @@ function App() {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
       const value = raw ? JSON.parse(raw).welcomeTitle : "";
-      return typeof value === "string" && value.trim() ? value : "Welcome master";
+      return typeof value === "string" && value.trim() ? value : "Welcome to Snip AI";
     } catch {
-      return "Welcome master";
+      return "Welcome to Snip AI";
     }
   });
 
@@ -742,13 +739,33 @@ function App() {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
       const value = raw ? JSON.parse(raw).welcomeSubtitle : "";
-      return typeof value === "string" && value.trim() ? value : "Aaj ka kya plan hai?";
+      return typeof value === "string" && value.trim() ? value : "Ready to create your next clips?";
     } catch {
-      return "Aaj ka kya plan hai?";
+      return "Ready to create your next clips?";
     }
   });
 
   const [showWelcome, setShowWelcome] = useState(true);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<string>("pipeline-progress", (event) => {
+      const message = event.payload.trim();
+      if (!message) return;
+      setProcessingDetail(message);
+      const normalized = message.toLowerCase();
+      if (normalized.includes("whisper") || normalized.includes("transcrib") || normalized.includes("swift")) {
+        setProcessingStage(1);
+      } else if (normalized.includes("moment") || normalized.includes("analyz")) {
+        setProcessingStage(2);
+      } else if (normalized.includes("render") || normalized.includes("clip")) {
+        setProcessingStage(3);
+      } else if (normalized.includes("caption")) {
+        setProcessingStage(4);
+      }
+    }).then((stop) => { unlisten = stop; });
+    return () => unlisten?.();
+  }, []);
 
   useEffect(() => {
     try {
@@ -772,81 +789,17 @@ function App() {
   }, [defaultFormat, defaultClipCount, welcomeTitle, welcomeSubtitle]);
 
   const selectedTemplate =
-    REMOTION_CAPTION_THEMES.find(
+    CAPTION_STYLES.find(
       (item) => item.name === template,
-    ) ?? REMOTION_CAPTION_THEMES[0];
+    ) ?? CAPTION_STYLES[0];
 
   // ----------------------------------------------------------
-  // BILLING HELPERS
-  // ----------------------------------------------------------
-
-  const refreshBilling = async () => {
-    try {
-      const nextBilling = await getBillingState();
-      setBilling(nextBilling);
-      return nextBilling;
-    } catch (error) {
-      console.error(
-        "Could not refresh billing state:",
-        error,
-      );
-
-      return null;
-    } finally {
-      setBillingLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void refreshBilling();
-
-    const interval = window.setInterval(() => {
-      void refreshBilling();
-    }, 30000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, []);
-
-  const handleUpgrade = async () => {
-    if (billingBusy || billing.active || billing.isAdmin) {
-      return;
-    }
-
-    setBillingBusy(true);
-    setErrorMessage("");
-
-    try {
-      const result = await startLifetimePayment();
-
-      if (result?.active) {
-        await refreshBilling();
-        return;
-      }
-
-      setErrorMessage(
-        "Payment is still being verified. Please wait a moment and try again.",
-      );
-    } catch (error) {
-      console.error("[Billing] Lifetime payment failed:", error);
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      setErrorMessage(`Payment error: ${message}`);
-    } finally {
-      setBillingBusy(false);
-      await refreshBilling();
-    }
-  };
-
   const navigateTo = (page: WorkspacePage) => {
     if (isProcessing) return;
     setShowGallery(false);
     setProcessingComplete(false);
+    if (page === "auto-caption") setOutputKind("caption");
+    if (page === "auto-clipping") setOutputKind("clips");
     setWorkspacePage(page);
     setPlayingClip(null);
   };
@@ -861,7 +814,8 @@ function App() {
         ? record.template
         : "pop",
     );
-    setWorkspacePage("create");
+    setOutputKind(record.kind === "caption" ? "caption" : "clips");
+    setWorkspacePage(record.kind === "caption" ? "auto-caption" : "auto-clipping");
     setShowGallery(true);
     setProcessingComplete(false);
     setPlayingClip(null);
@@ -890,6 +844,7 @@ function App() {
     }
 
     setVideoName(getFileName(path));
+    videoPathRef.current = path;
     setVideoPath(path);
     setYoutubeLink("");
     setProcessingComplete(false);
@@ -962,7 +917,7 @@ function App() {
   const handleYoutubeLink = async () => {
     const link = youtubeLink.trim();
 
-    if (!link || isDownloading) {
+    if (!link || isDownloading || downloadInFlightRef.current) {
       return;
     }
 
@@ -984,8 +939,10 @@ function App() {
     setShowGallery(false);
     setPlayingClip(null);
     setSelectedClips(new Set());
+    downloadInFlightRef.current = true;
     setIsDownloading(true);
-    setVideoName("Downloading YouTube video…");
+     setVideoName("Downloading YouTube videoâ€¦");
+    videoPathRef.current = "";
     setVideoPath("");
 
     // Give React/Tauri time to paint the downloading state before
@@ -1015,9 +972,11 @@ function App() {
             : "Could not download the YouTube video.";
 
       setVideoName("");
+      videoPathRef.current = "";
       setVideoPath("");
       setErrorMessage(message);
     } finally {
+      downloadInFlightRef.current = false;
       setIsDownloading(false);
     }
   };
@@ -1026,8 +985,9 @@ function App() {
     setIsDownloading(false);
     setFormat(defaultFormat);
     setRequestedClips(defaultClipCount);
-    setWorkspacePage("create");
+    setWorkspacePage(workspacePage === "auto-caption" ? "auto-caption" : "auto-clipping");
     setVideoName("");
+    videoPathRef.current = "";
     setVideoPath("");
     setYoutubeLink("");
     setProcessingComplete(false);
@@ -1040,11 +1000,13 @@ function App() {
   };
 
   const startProcessing = async () => {
-  if (isDownloading) {
+  setOutputKind("clips");
+  if (isDownloading || downloadInFlightRef.current) {
     return;
   }
 
-  if (!videoPath) {
+  const selectedInputPath = videoPathRef.current;
+  if (!selectedInputPath) {
     window.alert(
       "Please select a local video file or paste a YouTube link first.",
     );
@@ -1052,6 +1014,9 @@ function App() {
   }
 
   setErrorMessage("");
+  cancelRequestedRef.current = false;
+  setIsCanceling(false);
+  setProcessingDetail("");
   setProcessingComplete(false);
   setOutputPaths([]);
   setShowGallery(false);
@@ -1059,42 +1024,6 @@ function App() {
   setIsProcessing(true);
 
   try {
-    // --------------------------------------------------------
-    // LIFETIME BILLING CHECK
-    // --------------------------------------------------------
-
-    const currentBilling = await getBillingState();
-
-    if (!currentBilling.active && !currentBilling.isAdmin) {
-      setIsProcessing(false);
-      setProcessingProgress(0);
-      setProcessingStage(0);
-
-      try {
-        const paymentResult = await startLifetimePayment();
-
-        if (!paymentResult?.active) {
-          setErrorMessage(
-            "Payment was not confirmed yet. Please complete the ₹100 lifetime payment and try again.",
-          );
-          return;
-        }
-      } catch (paymentError) {
-        console.error(
-          "Lifetime payment error:",
-          paymentError,
-        );
-
-        const paymentMessage =
-          paymentError instanceof Error
-            ? paymentError.message
-            : "Payment could not be started.";
-
-        setErrorMessage(paymentMessage);
-        return;
-      }
-    }
-
     // --------------------------------------------------------
     // EXISTING SNIP AI PROCESSING PIPELINE
     // --------------------------------------------------------
@@ -1128,11 +1057,12 @@ function App() {
     const result = await invoke<string[]>(
       "create_clips",
       {
-        inputPath: videoPath,
+        inputPath: selectedInputPath,
         format,
         requestedClips,
         captionTemplate: template,
         differentCaptions,
+        audioLanguage,
       },
     );
 
@@ -1142,6 +1072,7 @@ function App() {
       );
     }
 
+    setOutputKind("clips");
     setOutputPaths(result);
 
     setProcessingStage(4);
@@ -1169,6 +1100,7 @@ function App() {
         template,
         clipCount: result.length,
         paths: result,
+        kind: "clips" as const,
       },
       ...previous.filter(
         (item) =>
@@ -1183,6 +1115,15 @@ function App() {
     setIsProcessing(false);
     setProcessingComplete(true);
   } catch (error) {
+    if (cancelRequestedRef.current) {
+      setIsProcessing(false);
+      setIsCanceling(false);
+      setProcessingProgress(0);
+      setProcessingStage(0);
+      setProcessingDetail("Processing canceled.");
+      cancelRequestedRef.current = false;
+      return;
+    }
     console.error(
       "Clip generation error:",
       error,
@@ -1201,6 +1142,43 @@ function App() {
     setProcessingStage(0);
   }
 };;
+
+  const startAutoCaption = async () => {
+    if (isDownloading || downloadInFlightRef.current) return;
+    const selectedInputPath = videoPathRef.current;
+    if (!selectedInputPath) { window.alert("Choose a video file first."); return; }
+    cancelRequestedRef.current = false; setIsCanceling(false); setErrorMessage(""); setProcessingDetail(""); setProcessingComplete(false); setOutputPaths([]); setShowGallery(false);
+    setOutputKind("caption"); setIsProcessing(true); setProcessingStage(0); setProcessingProgress(10);
+    try {
+      const result = await invoke<string[]>("create_auto_caption", { inputPath: selectedInputPath, captionTemplate: template, audioLanguage });
+      if (!result?.length) throw new Error("Auto Caption finished without creating an output video.");
+      setOutputPaths(result); setSelectedClips(new Set([0])); setProcessingProgress(100);
+      setHistoryRecords((previous) => [{ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: new Date().toISOString(), videoName: videoName || "Untitled video", format, template, clipCount: 1, paths: result, kind: "caption" as const }, ...previous].slice(0, 30));
+      setIsProcessing(false); setProcessingComplete(true);
+    } catch (error) {
+      if (cancelRequestedRef.current) {
+        setIsProcessing(false); setIsCanceling(false); setProcessingProgress(0); setProcessingStage(0); setProcessingDetail("Processing canceled."); cancelRequestedRef.current = false;
+        return;
+      }
+      const message = typeof error === "string" ? error : error instanceof Error ? error.message : "Could not caption the video.";
+      setErrorMessage(message); setIsProcessing(false); setProcessingProgress(0);
+    }
+  };
+
+  const cancelCurrentProcessing = async () => {
+    if (isCanceling) return;
+    cancelRequestedRef.current = true;
+    setIsCanceling(true);
+    setProcessingDetail("Stopping the current job…");
+    try {
+      await invoke("cancel_processing");
+    } catch (error) {
+      const message = typeof error === "string" ? error : error instanceof Error ? error.message : "Could not stop the current job.";
+      setErrorMessage(message);
+      cancelRequestedRef.current = false;
+      setIsCanceling(false);
+    }
+  };
 
   const openClipsFolder = async () => {
     if (outputPaths.length === 0) {
@@ -1347,9 +1325,11 @@ function App() {
             WORKSPACE
           </p>
 
-          <button type="button" className={`nav-item ${workspacePage === "create" ? "active" : ""}`} onClick={() => navigateTo("create")}>
-            <Clapperboard size={18} />
-            <span>Create</span>
+          <button type="button" className={`nav-item ${workspacePage === "auto-clipping" ? "active" : ""}`} onClick={() => navigateTo("auto-clipping")}>
+            <Clapperboard size={18} /><span>Auto Clipping</span>
+          </button>
+          <button type="button" className={`nav-item ${workspacePage === "auto-caption" ? "active" : ""}`} onClick={() => navigateTo("auto-caption")}>
+            <Captions size={18} /><span>Auto Caption</span>
           </button>
 
           <button type="button" className={`nav-item ${workspacePage === "projects" ? "active" : ""}`} onClick={() => navigateTo("projects")}>
@@ -1373,82 +1353,6 @@ function App() {
             <Settings size={18} />
             <span>Settings</span>
           </button>
-
-          <div
-            className={`access-card ${
-              billing.active
-                ? "access-card-active"
-                : "access-card-locked"
-            }`}
-          >
-            <div className="access-top">
-              <span
-                className={`status-dot ${
-                  billing.active
-                    ? "status-dot-active"
-                    : "status-dot-locked"
-                }`}
-              />
-
-              <span>
-                {billingLoading
-                  ? "Checking access…"
-                  : billing.isAdmin
-                    ? "Unlimited generation"
-                    : billing.active
-                      ? "Generation active"
-                      : "Generation locked"}
-              </span>
-            </div>
-
-            {billing.isAdmin ? (
-              <>
-                <div className="access-admin-title">
-                  Unlimited
-                </div>
-
-                <div className="access-admin-subtitle">
-                  Admin / Owner account
-                </div>
-              </>
-            ) : billing.active ? (
-              <>
-                <div className="access-days">
-                  <strong>Lifetime</strong>
-                  <span>access active</span>
-                </div>
-
-                <div className="access-plan-name">
-                  {billing.planName}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="access-days">
-                  <strong>
-                    ₹{billing.priceInr}
-                  </strong>
-
-                  <span>one-time payment</span>
-                </div>
-
-                <div className="access-plan-name">
-                  {billing.planName}
-                </div>
-
-                <button
-                  type="button"
-                  className="access-upgrade-button"
-                  onClick={handleUpgrade}
-                  disabled={billingBusy}
-                >
-                  {billingBusy
-                    ? "Opening payment…"
-                    : "Pay ₹100 & Activate Lifetime"}
-                </button>
-              </>
-            )}
-          </div>
 
           <div className="profile">
             <div className="avatar">
@@ -1501,11 +1405,10 @@ function App() {
                   OUTPUT
                 </p>
 
-                <h1>Your clips are ready.</h1>
+                <h1>{outputKind === "caption" ? "Your captioned video is ready." : "Your clips are ready."}</h1>
 
                 <p className="subtitle">
-                  Preview your generated clips
-                  directly inside Snip AI.
+                  Preview your generated {outputKind === "caption" ? "video" : "clips"} directly inside Snip AI.
                 </p>
               </div>
 
@@ -1546,7 +1449,7 @@ function App() {
 
                 <div className="gallery-count">
                   <Film size={15} />
-                  {outputPaths.length} clips
+                  {outputKind === "caption" ? "1 captioned video" : `${outputPaths.length} clips`}
                 </div>
 
                 <button
@@ -1724,7 +1627,7 @@ function App() {
                           </strong>
 
                           <span>
-                            {format} ·{" "}
+                             {format} Â·{" "}
                             {selectedTemplate.name}
                           </span>
                         </div>
@@ -1843,16 +1746,34 @@ function App() {
               </div>
             </div>
           </section>
-        ) : (workspacePage === "create" ? (
+        ) : (workspacePage === "auto-caption" ? (
+          <section className="auto-caption-page">
+            <header className="topbar"><div><p className="eyebrow">AUTO CAPTION</p><h1>Caption your full video.</h1><p className="subtitle">Transcribe locally, choose a style, and render the complete video without making clips. No GPT or internet connection is required.</p></div><div className="secure-badge"><ShieldCheck size={15} /> Local CPU / GPU</div></header>
+            <section className="workspace">
+              <div className={`drop-zone ${dragging ? "dragging" : ""} ${videoName ? "has-video" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop}>
+                <div className="drop-icon">{videoName ? <Check size={23} /> : <Upload size={23} />}</div><h2>{videoName ? "Video ready" : "Choose a video to caption"}</h2><p>{videoName || "Drop a video here or browse your computer"}</p>
+                {!videoName && <button className="primary-small" onClick={handleBrowse}><FolderOpen size={16} />Browse video</button>}
+                {videoName && <button className="change-video-button" onClick={resetVideo}>Choose another video</button>}
+                <div className="upload-note">Your full video stays local. CPU fallback works without a supported GPU.</div>
+              </div>
+              <div className="auto-caption-options">
+                <div className="option-card"><div className="option-heading"><div><span className="option-title">Audio language</span><span className="option-description">Used for accurate offline transcription</span></div></div><select value={audioLanguage} onChange={(event) => setAudioLanguage(event.target.value as "english" | "hinglish")}><option value="hinglish">Hinglish (Hindi + English)</option><option value="english">English</option></select></div>
+                <div className="option-card caption-card remotion-caption-card"><div className="option-heading"><div><span className="option-title">Caption style</span><span className="option-description">{selectedTemplate.description}</span></div><strong>{selectedTemplate.label}</strong></div><div className="remotion-create-template-carousel"><div className="remotion-create-template-track">{CAPTION_STYLES.map((item) => <button key={item.name} type="button" className={`remotion-create-template-card ${template === item.name ? "selected" : ""}`} onClick={() => setTemplate(item.name as CaptionThemeName)}><div className="remotion-create-template-preview"><CaptionThemePreview theme={item.name} /></div><div className="remotion-create-template-footer"><span>{item.label}</span>{template === item.name && <span className="template-check"><Check size={10} /></span>}</div></button>)}</div></div></div>
+              </div>
+              {errorMessage && <div className="processing-error"><strong>Captioning failed</strong><span>{errorMessage}</span></div>}
+              <div className="generate-row"><div className="generation-info"><div className="mini-icon"><Captions size={15} /></div><div><strong>Full video output</strong><span>No clip selection or crop</span></div></div><button className="generate-button" onClick={startAutoCaption} disabled={isProcessing || !videoPath}><Captions size={18} />Add captions to full video</button></div>
+            </section>
+          </section>
+        ) : (workspacePage === "auto-clipping" ? (
           <>
             <header className="topbar">
               <div>
                 <p className="eyebrow">
-                  CREATE
+                  AUTO CLIPPING
                 </p>
 
                 <h1>
-                  Turn long videos into clips.
+                  Turn long videos into ready-to-post clips.
                 </h1>
 
                 <p className="subtitle">
@@ -1909,7 +1830,7 @@ function App() {
 
                 <h2>
                   {isDownloading
-                    ? "Downloading YouTube video…"
+                     ? "Downloading YouTube videoâ€¦"
                     : videoName
                       ? "Video ready"
                       : "Drop your video here"}
@@ -1917,7 +1838,7 @@ function App() {
 
                 <p>
                   {isDownloading
-                    ? "Fetching your video from YouTube. Please wait…"
+                     ? "Fetching your video from YouTube. Please waitâ€¦"
                     : videoName
                       ? videoName
                       : "Drag & drop a video file, or paste a YouTube link"}
@@ -1953,7 +1874,7 @@ function App() {
                         }}
                         placeholder={
                           isDownloading
-                            ? "Downloading YouTube video…"
+                           ? "Downloading YouTube videoâ€¦"
                             : "Paste YouTube link"
                         }
                         aria-label="Paste YouTube link"
@@ -2015,7 +1936,7 @@ function App() {
                         size={14}
                         className="button-spinner"
                       />
-                      <span>Downloading from YouTube…</span>
+                       <span>Downloading from YouTubeâ€¦</span>
                     </div>
 
                     <div
@@ -2099,6 +2020,18 @@ function App() {
                       </button>
                     ))}
                   </div>
+                  <div className="language-detection-note">
+                    <label htmlFor="audio-language-select">Audio language</label>
+                    <select
+                      id="audio-language-select"
+                      value={audioLanguage}
+                      onChange={(event) => setAudioLanguage(event.target.value as "english" | "hinglish")}
+                      aria-label="Audio language"
+                    >
+                      <option value="hinglish">Hinglish (Hindi + English)</option>
+                      <option value="english">English</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div className="option-card caption-card remotion-caption-card">
@@ -2106,7 +2039,7 @@ function App() {
                     <div>
                       <span className="option-title">Caption template</span>
                       <span className="option-description">
-                        Choose one of the 13 Remotion caption themes
+                        Choose one of the 15 FFmpeg caption styles
                       </span>
                     </div>
 
@@ -2117,7 +2050,7 @@ function App() {
 
                   <div className="remotion-create-template-carousel">
                     <div className="remotion-create-template-track">
-                      {REMOTION_CAPTION_THEMES.map((item) => (
+                      {CAPTION_STYLES.map((item) => (
                         <button
                           key={item.name}
                           type="button"
@@ -2142,7 +2075,7 @@ function App() {
                   </div>
 
                   <div className="template-scroll-hint">
-                    ← Scroll to explore all 13 Remotion styles →
+                     â† Scroll to explore all 15 caption styles â†’
                   </div>
 
                   <div className="caption-theme-selected-note">
@@ -2238,12 +2171,7 @@ function App() {
                   ) : (
                     <>
                       <Sparkles size={18} />
-                      {billing.active
-                        ? "Generate clips"
-                        : "Unlock & generate"}
-                      <span className="button-arrow">
-                        →
-                      </span>
+                      Generate clips
                     </>
                   )}
                 </button>
@@ -2266,7 +2194,7 @@ function App() {
           <TemplatesPage
             template={template}
             onSelect={setTemplate}
-            onUse={() => navigateTo("create")}
+            onUse={() => navigateTo("auto-clipping")}
           />
         ) : workspacePage === "history" ? (
           <HistoryPage
@@ -2288,11 +2216,11 @@ function App() {
             onReset={() => {
               setDefaultFormat("1:1");
               setDefaultClipCount(5);
-              setWelcomeTitle("Welcome master");
-              setWelcomeSubtitle("Aaj ka kya plan hai?");
+              setWelcomeTitle("Welcome to Snip AI");
+              setWelcomeSubtitle("Ready to create your next clips?");
             }}
           />
-        ) : null))}
+        ) : null)))}
 
         {isProcessing && (
           <div className="processing-overlay">
@@ -2306,7 +2234,7 @@ function App() {
                   <span>SNIP AI</span>
 
                   <h2>
-                    Creating your clips
+                    {outputKind === "caption" ? "Captioning your full video" : "Creating your clips"}
                   </h2>
 
                   <p>
@@ -2319,6 +2247,15 @@ function App() {
                 <div className="processing-percent">
                   {processingProgress}%
                 </div>
+
+                <button
+                  className="processing-cancel"
+                  onClick={cancelCurrentProcessing}
+                  disabled={isCanceling}
+                  aria-label={isCanceling ? "Stopping processing" : outputKind === "caption" ? "Cancel captioning" : "Cancel generation"}
+                >
+                  <X size={15} /> {isCanceling ? "Stopping…" : outputKind === "caption" ? "Cancel captioning" : "Cancel generation"}
+                </button>
               </div>
 
               <div className="processing-progress">
@@ -2334,8 +2271,8 @@ function App() {
                 <div className="processing-current-icon">
                   {(() => {
                     const Icon =
-                      processingStages[
-                        processingStage
+                      activeProcessingStages[
+                        Math.min(processingStage, activeProcessingStages.length - 1)
                       ].icon;
 
                     return <Icon size={19} />;
@@ -2345,16 +2282,16 @@ function App() {
                 <div>
                   <strong>
                     {
-                      processingStages[
-                        processingStage
+                      activeProcessingStages[
+                        Math.min(processingStage, activeProcessingStages.length - 1)
                       ].title
                     }
                   </strong>
 
                   <span>
-                    {
-                      processingStages[
-                        processingStage
+                    {processingDetail ||
+                      activeProcessingStages[
+                        Math.min(processingStage, activeProcessingStages.length - 1)
                       ].description
                     }
                   </span>
@@ -2367,7 +2304,7 @@ function App() {
               </div>
 
               <div className="processing-stages">
-                {processingStages.map(
+                {activeProcessingStages.map(
                   (stage, index) => {
                     const StageIcon =
                       stage.icon;
@@ -2408,7 +2345,7 @@ function App() {
                         </span>
 
                         {index !==
-                          processingStages.length -
+                          activeProcessingStages.length -
                             1 && (
                           <div className="stage-line" />
                         )}
@@ -2443,20 +2380,11 @@ function App() {
               </span>
 
               <h2>
-                Your clips are ready.
+                {outputKind === "caption" ? "Your captioned video is ready." : "Your clips are ready."}
               </h2>
 
               <p>
-                Snip AI generated{" "}
-                <strong>
-                  {outputPaths.length}
-                </strong>{" "}
-                real clip
-                {outputPaths.length === 1
-                  ? ""
-                  : "s"} in{" "}
-                <strong>{format}</strong>{" "}
-                format.
+                {outputKind === "caption" ? "The complete video has been captioned." : <>Snip AI generated <strong>{outputPaths.length}</strong> real clip{outputPaths.length === 1 ? "" : "s"} in <strong>{format}</strong> format.</>}
               </p>
 
               <div className="complete-stats">
@@ -2465,13 +2393,13 @@ function App() {
                     {outputPaths.length}
                   </strong>
                   <span>
-                    clips generated
+                    {outputKind === "caption" ? "captioned video" : "clips generated"}
                   </span>
                 </div>
 
                 <div>
-                  <strong>{format}</strong>
-                  <span>video format</span>
+                  <strong>{outputKind === "caption" ? "Full video" : format}</strong>
+                  <span>{outputKind === "caption" ? "original aspect preserved" : "video format"}</span>
                 </div>
 
                 <div>
@@ -2486,8 +2414,7 @@ function App() {
                 <span>Saved locally</span>
 
                 <strong>
-                  Your generated clips are ready
-                  to preview.
+                  {outputKind === "caption" ? "Your full-length captioned video is ready to preview." : "Your generated clips are ready to preview."}
                 </strong>
               </div>
 
@@ -2508,7 +2435,7 @@ function App() {
                   }
                 >
                   <Play size={16} />
-                  Preview clips
+                  {outputKind === "caption" ? "Preview video" : "Preview clips"}
                 </button>
               </div>
             </div>
@@ -2523,10 +2450,10 @@ function App() {
             <div className="welcome-modal">
               <div className="welcome-modal-icon"><Sparkles size={22} /></div>
               <span className="welcome-modal-eyebrow">SNIP AI</span>
-              <h2>{welcomeTitle || "Welcome master"}</h2>
-              <p>{welcomeSubtitle || "Aaj ka kya plan hai?"}</p>
+              <h2>{welcomeTitle || "Welcome to Snip AI"}</h2>
+              <p>{welcomeSubtitle || "Ready to create your next clips?"}</p>
               <button type="button" className="welcome-continue-button" onClick={() => setShowWelcome(false)}>
-                Let's create <span>→</span>
+                Let's create
               </button>
             </div>
           </div>

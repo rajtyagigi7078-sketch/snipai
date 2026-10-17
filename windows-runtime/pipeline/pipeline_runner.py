@@ -10,20 +10,20 @@ import time
 
 
 # ============================================================
-# SNIP AI — PORTABLE PIPELINE RUNNER V4
+# SNIP AI â€” PORTABLE PIPELINE RUNNER V4
 #
 # Pipeline:
 #
 # Video
-#   ↓
+#   â†“
 # Whisper
-#   ↓
+#   â†“
 # Story Event Map V3
-#   ↓
+#   â†“
 # Generation Selector
-#   ↓
+#   â†“
 # Simple Renderer
-#   ↓
+#   â†“
 # Final clips
 #
 # Supports:
@@ -37,20 +37,10 @@ import time
 # PROJECT / RUNTIME PATHS
 # ============================================================
 
-REMOTION_THEMES = {
-    "pop",
-    "karaoke",
-    "hustle",
-    "grape",
-    "beast",
-    "poppin",
-    "aarit",
-    "soft-ai",
-    "gaming-stream",
-    "simple-one-word",
-    "kinetic-01",
-    "kinetic-02",
-    "podcast",
+FFMPEG_CAPTION_TEMPLATES = {
+    "pop", "karaoke", "bold-center", "punch", "minimal",
+    "highlight-box", "typewriter", "bounce", "kinetic", "podcast",
+    "yellow-stack", "violet-pill", "dual-line", "bold-karaoke", "soft-lyric",
 }
 
 
@@ -98,7 +88,6 @@ if BUNDLED_RUNTIME:
         BUNDLED_PYTHON = (
             RUNTIME_ROOT
             / "python"
-            / "Scripts"
             / "python.exe"
         )
     else:
@@ -173,7 +162,13 @@ CLIPPER_DIR = (
 
 if os.name == "nt":
     # Windows production ALWAYS uses the bundled runtime.
-    WHISPER_PYTHON = BUNDLED_PYTHON
+    supplied_python = os.environ.get("SNIP_AI_PYTHON")
+    if BUNDLED_PYTHON is not None and BUNDLED_PYTHON.is_file():
+        WHISPER_PYTHON = BUNDLED_PYTHON
+    elif supplied_python and Path(supplied_python).expanduser().is_file():
+        WHISPER_PYTHON = Path(supplied_python).expanduser().resolve()
+    else:
+        WHISPER_PYTHON = Path(sys.executable)
 
 else:
     # Linux development ALWAYS reuses the exact Python
@@ -214,27 +209,12 @@ if BUNDLED_RUNTIME:
     )
 
 else:
+    PIPELINE_DIR = Path(__file__).resolve().parent
 
-    WHISPER_SCRIPT = (
-        CLIPPER_DIR
-        / "whisper_transcribe.py"
-    )
-
-    STORY_EVENT_MAP_SCRIPT = (
-        BASE_DIR
-        / "story_event_map.py"
-    )
-
-    GENERATION_SELECTOR_SCRIPT = (
-        BASE_DIR
-        / "generation_selector.py"
-    )
-
-    RENDER_SCRIPT = (
-        BASE_DIR
-        / "render_clips_simple.py"
-    )
-
+    WHISPER_SCRIPT = PIPELINE_DIR / "whisper_transcribe.py"
+    STORY_EVENT_MAP_SCRIPT = PIPELINE_DIR / "story_event_map.py"
+    GENERATION_SELECTOR_SCRIPT = PIPELINE_DIR / "generation_selector.py"
+    RENDER_SCRIPT = PIPELINE_DIR / "render_clips_simple.py"
 
 # ============================================================
 # FFMPEG / FFPROBE
@@ -467,7 +447,7 @@ def run_command(
 
     print()
     print("=" * 72)
-    print(f"SNIP AI — {stage}")
+    print(f"SNIP AI â€” {stage}")
     print("=" * 72)
 
     print()
@@ -750,6 +730,26 @@ def prepare_story_event_map(
         + source[end:]
     )
 
+    output_marker = "OUTPUT_FILE = Path("
+    output_start = patched.find(output_marker)
+    if output_start == -1:
+        raise SystemExit("STOP: OUTPUT_FILE configuration not found.")
+
+    output_end = patched.find("\n\n", output_start)
+    if output_end == -1:
+        raise SystemExit("STOP: OUTPUT_FILE configuration boundary not found.")
+
+    output_replacement = (
+        "OUTPUT_FILE = Path("
+        + repr(str(STORY_EVENT_MAP_FILE))
+        + ")"
+    )
+    patched = (
+        patched[:output_start]
+        + output_replacement
+        + patched[output_end:]
+    )
+
     WORK_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -770,6 +770,7 @@ def prepare_story_event_map(
 
 def run_story_event_map(
     transcript_path,
+    audio_language="hinglish",
 ):
 
     temp_script = (
@@ -811,10 +812,100 @@ def run_story_event_map(
         )
 
     if not STORY_EVENT_MAP_FILE.exists():
+        try:
+            transcript = json.loads(
+                Path(transcript_path).read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            transcript = {}
 
+        if transcript.get("transcription_status") in {"no_speech", "no_words"}:
+            STORY_EVENT_MAP_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STORY_EVENT_MAP_FILE.write_text(
+                json.dumps(
+                    {
+                        "duration": transcript.get("duration", 0),
+                        "transcript_segments": 0,
+                        "event_anchors": 0,
+                        "event_combinations": 0,
+                        "raw_standalone_clips": 0,
+                        "strict_unique_candidates": 0,
+                        "unique_standalone_clips": 0,
+                        "events": [],
+                        "moments": [],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            fail(
+                "Story Event Map V3 completed but "
+                "story-event-map.json was not found."
+            )
+
+    try:
+        event_map = json.loads(
+            STORY_EVENT_MAP_FILE.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as error:
         fail(
-            "Story Event Map V3 completed but "
-            "story-event-map.json was not found."
+            "Story Event Map V3 created an unreadable result.\n"
+            f"Details: {error}"
+        )
+
+    moments = event_map.get("moments", [])
+    if not moments:
+        try:
+            transcript = json.loads(
+                Path(transcript_path).read_text(encoding="utf-8")
+            )
+            segments = transcript.get("segments", [])
+            word_count = sum(
+                len(segment.get("words", []))
+                for segment in segments
+                if isinstance(segment, dict)
+            )
+            duration = float(transcript.get("duration", 0) or 0)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            word_count = 0
+            duration = 0
+
+        if duration > 0:
+            minutes, seconds = divmod(int(round(duration)), 60)
+            duration_text = f"{minutes}m {seconds:02d}s"
+        else:
+            duration_text = "the full video"
+
+        selected_language = (
+            "Hinglish" if audio_language == "hinglish" else "English"
+        )
+        if transcript.get("transcription_status") == "no_speech":
+            fail(
+                "No clip moments were found because the speech detector found no clear "
+                "voice regions in this video. Hinglish transcription was skipped to avoid "
+                "turning game sounds or silence into fake words. This clip finder needs "
+                "spoken commentary; it cannot currently select gameplay moments from "
+                "visual action alone."
+            )
+        if transcript.get("transcription_status") == "no_words":
+            fail(
+                f"No clip moments were found. The speech detector found "
+                f"{transcript.get('speech_regions', 0)} voice regions, but the selected "
+                f"{selected_language} model returned no reliable timed words. Try the other "
+                "audio language if it matches the speaker, or use a video with clearer speech."
+            )
+        advice = (
+            "If the commentary is mostly English, choose English as the audio language. "
+            "If the video has little or no spoken commentary, this speech based clip finder "
+            "cannot identify reliable moments from it yet."
+        )
+        fail(
+            "No clip moments were found. The story analyzer received "
+            f"{word_count} timed words from {duration_text} of video and produced "
+            "zero candidates. This usually means the audio has very little clear speech "
+            f"or does not match the selected {selected_language} language.\n"
+            f"{advice}"
         )
 
 
@@ -1024,25 +1115,15 @@ def run_renderer(
         )
 
     allowed_caption_templates = {
-        "pop",
-        "karaoke",
-        "hustle",
-        "grape",
-        "beast",
-        "poppin",
-        "aarit",
-        "soft-ai",
-        "gaming-stream",
-        "simple-one-word",
-        "kinetic-01",
-        "kinetic-02",
-        "podcast",
+        "pop", "karaoke", "bold-center", "punch", "minimal",
+        "highlight-box", "typewriter", "bounce", "kinetic", "podcast",
+    "yellow-stack", "violet-pill", "dual-line", "bold-karaoke", "soft-lyric",
     }
 
-    if caption_template not in REMOTION_THEMES:
+    if caption_template not in FFMPEG_CAPTION_TEMPLATES:
 
         fail(
-            f"Invalid Remotion caption theme: "
+            f"Invalid caption template: "
             f"{caption_template}"
         )
 
@@ -1179,20 +1260,18 @@ def main():
         else False
     )
 
+    audio_language = (
+        sys.argv[6].strip().lower()
+        if len(sys.argv) >= 7
+        else "hinglish"
+    )
+    if audio_language not in {"english", "hinglish"}:
+        fail("Audio language must be english or hinglish.")
+
     allowed_caption_templates = {
-        "pop",
-        "karaoke",
-        "hustle",
-        "grape",
-        "beast",
-        "poppin",
-        "aarit",
-        "soft-ai",
-        "gaming-stream",
-        "simple-one-word",
-        "kinetic-01",
-        "kinetic-02",
-        "podcast",
+        "pop", "karaoke", "bold-center", "punch", "minimal",
+        "highlight-box", "typewriter", "bounce", "kinetic", "podcast",
+    "yellow-stack", "violet-pill", "dual-line", "bold-karaoke", "soft-lyric",
     }
 
     if caption_template not in allowed_caption_templates:
@@ -1222,7 +1301,7 @@ def main():
 
     print()
     print("=" * 72)
-    print("SNIP AI — PORTABLE PIPELINE V4")
+    print("SNIP AI â€” PORTABLE PIPELINE V4")
     print("=" * 72)
 
     print()
@@ -1354,6 +1433,7 @@ def main():
             WHISPER_PYTHON,
             WHISPER_SCRIPT,
             video_path,
+            audio_language,
         ],
         "WHISPER TRANSCRIPTION",
     )
@@ -1369,7 +1449,8 @@ def main():
     # --------------------------------------------------------
 
     run_story_event_map(
-        transcript_path
+        transcript_path,
+        audio_language,
     )
 
     # --------------------------------------------------------
@@ -1448,7 +1529,7 @@ def main():
 
     print()
     print("=" * 72)
-    print("SNIP AI — PIPELINE COMPLETE")
+    print("SNIP AI â€” PIPELINE COMPLETE")
     print("=" * 72)
 
     print()

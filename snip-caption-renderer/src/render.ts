@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import http from "node:http";
 import readline from "node:readline";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { bundle } from "@remotion/bundler";
@@ -63,6 +64,101 @@ type WorkerJob = {
   output: string;
 };
 
+let hasLoggedFfmpegArgs = false;
+
+type HardwareMode = "if-possible" | "disable";
+
+function getHardwareMode(): HardwareMode {
+  const value = String(
+    process.env.SNIP_AI_HARDWARE_ACCELERATION ?? "if-possible",
+  ).trim().toLowerCase();
+
+  if (value === "disable") {
+    return "disable";
+  }
+
+  // "enable", "if-possible", empty, and unknown values all use
+  // Remotion's safe hardware-acceleration negotiation.
+  return "if-possible";
+}
+
+function isLikelyHardwareEncoderFailure(error: unknown): boolean {
+  const message = String(error);
+
+  return /EPIPE|FFmpeg quit with code|Error opening output|Error applying encoder options|h264_nvenc|NVENC|encoder.*(failed|error)|Target closed/i.test(
+    message,
+  );
+}
+
+function diagnosticFfmpegOverride(info: {
+  type: "pre-stitcher" | "stitcher";
+  args: string[];
+}): string[] {
+  const args = [...info.args];
+
+  const codecFlagIndex = args.findIndex(
+    (arg) => arg === "-c:v" || arg === "-vcodec",
+  );
+
+  const videoEncoder =
+    codecFlagIndex >= 0
+      ? String(args[codecFlagIndex + 1] ?? "")
+      : "";
+
+  const configuredNvencPreset =
+    String(process.env.SNIP_AI_NVENC_PRESET ?? "p1").trim().toLowerCase();
+
+  const nvencPreset = /^p[1-7]$/.test(configuredNvencPreset)
+    ? configuredNvencPreset
+    : "p1";
+
+  // x264's "ultrafast" preset is not a valid NVENC preset. Likewise,
+  // do not leak an x264 CRF into hardware-encoder invocations.
+  const presetIndex = args.indexOf("-preset");
+  const crfIndex = args.indexOf("-crf");
+
+  if (videoEncoder === "libx264") {
+    if (presetIndex >= 0) {
+      args[presetIndex + 1] = "ultrafast";
+    } else {
+      const outputIndex = args.lastIndexOf("-y");
+      const insertAt = outputIndex >= 0 ? outputIndex : args.length;
+      args.splice(insertAt, 0, "-preset", "ultrafast");
+    }
+  } else if (videoEncoder === "h264_nvenc") {
+    if (presetIndex >= 0) {
+      args[presetIndex + 1] = nvencPreset;
+    } else {
+      const outputIndex = args.lastIndexOf("-y");
+      const insertAt = outputIndex >= 0 ? outputIndex : args.length;
+      args.splice(insertAt, 0, "-preset", nvencPreset);
+    }
+
+    const adjustedCrfIndex = args.indexOf("-crf");
+    if (adjustedCrfIndex >= 0) {
+      args.splice(adjustedCrfIndex, 2);
+    }
+  } else if (presetIndex >= 0) {
+    // Other hardware encoders have their own preset schemes. Do not pass
+    // an x264 preset to them.
+    args.splice(presetIndex, 2);
+  }
+
+  if (!hasLoggedFfmpegArgs) {
+    hasLoggedFfmpegArgs = true;
+
+    log("");
+    log("[FFMPEG DIAGNOSTIC] Remotion generated arguments:");
+    log(`Type: ${info.type}`);
+    log(info.args.join(" "));
+    log("[FFMPEG DIAGNOSTIC] Final encoder-aware arguments:");
+    log(args.join(" "));
+    log("");
+  }
+
+  return args;
+}
+
 const THEMES = [
   "pop",
   "karaoke",
@@ -83,10 +179,52 @@ function log(...args: unknown[]) {
   console.error(...args);
 }
 
+/**
+ * Safe performance tuning for local rendering.
+ *
+ * - Keep the existing concurrency ceiling instead of overloading the machine.
+ * - Increase OffthreadVideo frame-extraction threads from its default of 2.
+ * - Let Remotion use a hardware H.264 encoder when the machine supports one,
+ *   while automatically falling back to software encoding when it does not.
+ * - Set intermediate JPEG quality explicitly to Remotion's default so this
+ *   optimization never trades away final visual quality.
+ */
+function getRenderTuning() {
+  const cpuCount = Math.max(1, os.cpus().length);
+
+  const configuredConcurrency = Number(
+    process.env.SNIP_AI_RENDER_CONCURRENCY ?? NaN,
+  );
+
+  const configuredVideoThreads = Number(
+    process.env.SNIP_AI_OFFTHREAD_VIDEO_THREADS ?? NaN,
+  );
+
+  const autoConcurrency = Math.min(4, Math.max(1, cpuCount - 2));
+  const concurrency = Number.isFinite(configuredConcurrency)
+    ? Math.min(6, Math.max(1, Math.floor(configuredConcurrency)))
+    : autoConcurrency;
+
+  // The project benchmark showed that pushing frame extraction threads higher
+  // does not improve the current composition and can make Chromium less stable.
+  // Keep Remotion's documented default of 2 unless explicitly overridden.
+  const videoThreads = Number.isFinite(configuredVideoThreads)
+    ? Math.min(6, Math.max(1, Math.floor(configuredVideoThreads)))
+    : 2;
+
+  return {
+    concurrency,
+    videoThreads,
+    hardwareAcceleration: getHardwareMode(),
+    jpegQuality: 80,
+  };
+}
+
+
 function fail(message: string): never {
   log("");
   log("==============================================");
-  log("SNIP AI — REMOTION RENDER FAILED");
+  log("SNIP AI Ã¢â‚¬â€ REMOTION RENDER FAILED");
   log("==============================================");
   log(message);
   log("==============================================");
@@ -422,6 +560,32 @@ async function bundleRemotion() {
   return serveUrl;
 }
 
+async function renderMediaWithFallback(
+  params: Parameters<typeof renderMedia>[0],
+) {
+  try {
+    await renderMedia(params);
+  } catch (error) {
+    if (
+      params.hardwareAcceleration === "if-possible" &&
+      isLikelyHardwareEncoderFailure(error)
+    ) {
+      log("");
+      log("[HARDWARE FALLBACK] Hardware H.264 render failed.");
+      log("[HARDWARE FALLBACK] Retrying with software libx264 ultrafast.");
+      log("");
+
+      await renderMedia({
+        ...params,
+        hardwareAcceleration: "disable",
+      });
+      return;
+    }
+
+    throw error;
+  }
+}
+
 async function renderJob(
   job: WorkerJob,
   serveUrl: string,
@@ -597,18 +761,7 @@ async function renderJob(
         durationInFrames,
       };
 
-    const renderConcurrency =
-      Math.min(
-        4,
-        Math.max(
-          1,
-          Number(
-            process.env
-              .SNIP_AI_RENDER_CONCURRENCY ||
-              4,
-          ),
-        ),
-      );
+    const tuning = getRenderTuning();
 
     log("");
     log(
@@ -620,21 +773,29 @@ async function renderJob(
     );
 
     log(
-      `Concurrency : ${renderConcurrency}`,
+      `Concurrency : ${tuning.concurrency}`,
     );
 
     log(
-      "Hardware acceleration : disabled",
+      `OffthreadVideo threads : ${tuning.videoThreads}`,
     );
 
     log(
-      "x264 preset : ultrafast",
+      `Hardware acceleration : ${tuning.hardwareAcceleration}`,
+    );
+
+    log(
+      `Encoding path : Remotion automatic H.264 (${tuning.hardwareAcceleration})`,
+    );
+
+    log(
+      "Encoder preset : automatic (NVENC p1 / software ultrafast)",
     );
 
     const renderStarted =
       performance.now();
 
-    await renderMedia({
+    await renderMediaWithFallback({
       composition:
         finalComposition,
       serveUrl,
@@ -644,11 +805,15 @@ async function renderJob(
       inputProps,
       overwrite: true,
       concurrency:
-        renderConcurrency,
+        tuning.concurrency,
       hardwareAcceleration:
-        "disable",
-      x264Preset:
-        "ultrafast",
+        tuning.hardwareAcceleration,
+      jpegQuality:
+        tuning.jpegQuality,
+      offthreadVideoThreads:
+        tuning.videoThreads,
+      ffmpegOverride:
+        diagnosticFfmpegOverride,
     });
 
     const renderSeconds =
@@ -661,7 +826,7 @@ async function renderJob(
     );
 
     log(
-      "SNIP AI — REMOTION RENDER COMPLETE",
+      "SNIP AI Ã¢â‚¬â€ REMOTION RENDER COMPLETE",
     );
 
     return {
@@ -685,7 +850,7 @@ async function startWorker() {
     "==============================================",
   );
   log(
-    "SNIP AI — PERSISTENT REMOTION WORKER",
+    "SNIP AI Ã¢â‚¬â€ PERSISTENT REMOTION WORKER",
   );
   log(
     "==============================================",
@@ -905,7 +1070,7 @@ async function runSingleCli() {
   );
 
   log(
-    "SNIP AI — REMOTION PRODUCTION RENDERER",
+    "SNIP AI Ã¢â‚¬â€ REMOTION PRODUCTION RENDERER",
   );
 
   log(
@@ -975,7 +1140,7 @@ async function runSingleCli() {
     );
 
     log(
-      "SNIP AI — REMOTION RENDER COMPLETE",
+      "SNIP AI Ã¢â‚¬â€ REMOTION RENDER COMPLETE",
     );
 
     log(

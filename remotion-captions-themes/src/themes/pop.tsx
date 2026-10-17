@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { InternalThemeProps } from "../types";
 
@@ -12,26 +12,78 @@ export const PopTheme: React.FC<InternalThemeProps> = ({
   const { fps } = useVideoConfig();
   const time = frame / fps;
 
-  // Find active line
-  let activeLineIdx = 0;
-  for (let i = 0; i < data.lines.length; i++) {
-    const line = data.lines[i];
-    if (line.words.length === 0) continue;
+  const lines = data.lines;
+
+  if (!lines.length) {
+    return null;
+  }
+
+  // Find the active caption line.
+  // Caption lines are chronological, so stop as soon as the
+  // current frame falls inside a line or before the next line.
+  let activeLine = lines[0];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (!line.words.length) {
+      continue;
+    }
+
     const lineStart = line.words[0].start;
     const lineEnd = line.words[line.words.length - 1].end;
-    if (time >= lineStart && time <= lineEnd) {
-      activeLineIdx = i;
+
+    if (time < lineStart) {
       break;
     }
-    if (time > lineEnd) {
-      activeLineIdx = i;
+
+    activeLine = line;
+
+    if (time <= lineEnd) {
+      break;
     }
   }
 
-  const activeLine = data.lines[activeLineIdx] || data.lines[0];
-  if (!activeLine || !activeLine.words.length) return null;
+  if (!activeLine.words.length) {
+    return null;
+  }
 
-  const size = typeof fontSize === "number" ? `${fontSize}px` : (fontSize ?? "4.5rem");
+  const size =
+    typeof fontSize === "number"
+      ? `${fontSize}px`
+      : (fontSize ?? "4.5rem");
+
+  // Only the currently spoken word needs the spring calculation.
+  // Previously every visible word called spring() on every frame.
+  let activeWordIndex = -1;
+
+  for (let i = 0; i < activeLine.words.length; i++) {
+    const word = activeLine.words[i];
+
+    if (time >= word.start && time < word.end) {
+      activeWordIndex = i;
+      break;
+    }
+  }
+
+  const activeWord =
+    activeWordIndex >= 0 ? activeLine.words[activeWordIndex] : null;
+
+  const activeWordStartFrame = activeWord
+    ? Math.round(activeWord.start * fps)
+    : 0;
+
+  const activeScale = activeWord
+    ? spring({
+        frame: frame - activeWordStartFrame,
+        fps,
+        config: {
+          damping: 10,
+          mass: 0.4,
+          stiffness: 150,
+        },
+      })
+    : 0;
 
   return (
     <div
@@ -52,21 +104,14 @@ export const PopTheme: React.FC<InternalThemeProps> = ({
       }}
     >
       {activeLine.words.map((word, index) => {
-        const startFrame = Math.round(word.start * fps);
-        const isActive = time >= word.start && time < word.end;
-
-        const scale = spring({
-          frame: frame - startFrame,
-          fps,
-          config: {
-            damping: 10,
-            mass: 0.4,
-            stiffness: 150,
-          },
-        });
+        const isActive = index === activeWordIndex;
 
         const color = isActive ? secondaryColor : primaryColor;
-        const transform = isActive ? `scale(${1 + scale * 0.2})` : "scale(1)";
+
+        const transform = isActive
+          ? `scale(${1 + activeScale * 0.2})`
+          : "scale(1)";
+
         const opacity = isActive ? 1 : 0.6;
 
         return (
@@ -77,7 +122,8 @@ export const PopTheme: React.FC<InternalThemeProps> = ({
               transform,
               opacity,
               display: "inline-block",
-              transition: "transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), color 0.1s ease",
+              transition:
+                "transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), color 0.1s ease",
             }}
           >
             {word.text}

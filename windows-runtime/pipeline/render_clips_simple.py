@@ -83,13 +83,18 @@ def run_command(command, description):
     # --------------------------------------------------------
 
     if process.returncode != 0:
-        error = process.stderr.strip()
+        error = "\n".join(
+            stream.strip()
+            for stream in (process.stderr, process.stdout)
+            if stream and stream.strip()
+        )
 
         if len(error) > 8000:
             error = error[-8000:]
 
         raise RuntimeError(
-            f"{description} failed.\n\n{error}"
+            f"{description} failed (exit code {process.returncode}).\n\n"
+            f"{error or 'FFmpeg did not provide diagnostic output.'}"
         )
 
     return process
@@ -160,19 +165,9 @@ def parse_arguments():
     )
 
     allowed_caption_templates = {
-        "pop",
-        "karaoke",
-        "hustle",
-        "grape",
-        "beast",
-        "poppin",
-        "aarit",
-        "soft-ai",
-        "gaming-stream",
-        "simple-one-word",
-        "kinetic-01",
-        "kinetic-02",
-        "podcast",
+        "pop", "karaoke", "bold-center", "punch", "minimal",
+        "highlight-box", "typewriter", "bounce", "kinetic", "podcast",
+    "yellow-stack", "violet-pill", "dual-line", "bold-karaoke", "soft-lyric",
     }
 
     if caption_template not in allowed_caption_templates:
@@ -435,6 +430,42 @@ def ffmpeg_has_encoder(name):
         return False
 
 
+def ffmpeg_can_encode(encoder, encoder_options=()):
+    if not ffmpeg_has_encoder(encoder):
+        return False
+
+    command = [
+        FFMPEG,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=1280x720:r=30:d=0.04",
+        "-frames:v",
+        "1",
+        "-an",
+        "-c:v",
+        encoder,
+        *encoder_options,
+        "-f",
+        "null",
+        "-",
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def select_encoder():
     device = detect_vaapi_device()
 
@@ -447,6 +478,11 @@ def select_encoder():
             "encoder": "h264_vaapi",
             "device": device,
         }
+
+    if os.name == "nt":
+        for encoder, mode in (("h264_nvenc", "nvenc"), ("h264_qsv", "qsv"), ("h264_amf", "amf")):
+            if ffmpeg_can_encode(encoder, ()):
+                return {"mode": mode, "encoder": encoder, "device": None}
 
     return {
         "mode": "software",
@@ -701,12 +737,27 @@ def render_to_temp(
             str(temp_output),
         ]
 
+    elif encoder_info["mode"] in {"amf", "nvenc", "qsv"}:
+        encoder_name = {"amf": "h264_amf", "nvenc": "h264_nvenc", "qsv": "h264_qsv"}[encoder_info["mode"]]
+        if encoder_info["mode"] == "amf":
+            encoder_args = ["-quality", "speed", "-rc", "cqp", "-qp_i", "20", "-qp_p", "20"]
+        elif encoder_info["mode"] == "nvenc":
+            encoder_args = ["-preset", "p4", "-cq", "20"]
+        else:
+            encoder_args = ["-preset", "veryfast", "-global_quality", "20"]
+        command = [
+            FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+            "-ss", f"{start:.3f}", "-i", str(source),
+            "-t", f"{end - start:.3f}", "-map", "0:v:0", "-map", "0:a?",
+            "-vf", video_filter, "-c:v", encoder_name, *encoder_args,
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+            "-f", "matroska", str(temp_output),
+        ]
     else:
         """
         Software fallback.
 
-        libx264 is used when no accessible VAAPI
-        encoder/device is available.
+        libx264 is used when no supported hardware encoder initializes.
         """
 
         command = [
@@ -935,10 +986,10 @@ def clean_old_outputs(output_dir):
 # REMOTION CAPTION ENGINE
 # ============================================================
 
-REMOTION_THEMES = {
-    "pop", "karaoke", "hustle", "grape", "beast", "poppin", "aarit",
-    "soft-ai", "gaming-stream", "simple-one-word", "kinetic-01",
-    "kinetic-02", "podcast",
+FFMPEG_CAPTION_TEMPLATES = {
+    "pop", "karaoke", "bold-center", "punch", "minimal",
+    "highlight-box", "typewriter", "bounce", "kinetic", "podcast",
+    "yellow-stack", "violet-pill", "dual-line", "bold-karaoke", "soft-lyric",
 }
 
 
@@ -989,7 +1040,7 @@ def resolve_node():
         return Path(found)
 
     raise RuntimeError(
-        "Node.js was not found. Snip AI needs Node.js for Remotion captions."
+        "Node.js was not found. Snip AI needs Node.js for FFmpeg caption generation."
     )
 
 
@@ -998,6 +1049,7 @@ def write_relative_transcript(
     clip_start,
     clip_end,
     output_path,
+    allow_empty=False,
 ):
     data = json.loads(
         Path(source_transcript).read_text(
@@ -1084,7 +1136,7 @@ def write_relative_transcript(
                 }
             )
 
-    if not segments:
+    if not segments and not allow_empty:
         raise RuntimeError(
             f"No Whisper words overlap clip "
             f"{clip_start:.3f}s -> "
@@ -1422,6 +1474,214 @@ class PersistentRemotionPool:
         self.workers.clear()
 
 
+def resolve_ffmpeg_caption_engine():
+    configured = os.environ.get("SNIP_AI_FFMPEG_CAPTION_ENGINE")
+    candidates = []
+    if configured:
+        candidates.append(Path(configured).expanduser().resolve())
+    candidates.extend([
+        BASE_DIR / "ffmpeg-captions" / "engine.cjs",
+        BASE_DIR / "snip-caption-renderer" / "src" / "ffmpeg-captions" / "engine.cjs",
+        BASE_DIR.parent / "snip-caption-renderer" / "src" / "ffmpeg-captions" / "engine.cjs",
+        BASE_DIR.parent.parent / "snip-caption-renderer" / "src" / "ffmpeg-captions" / "engine.cjs",
+    ])
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(
+        "FFmpeg caption engine was not found. Expected snip-caption-renderer/src/ffmpeg-captions/engine.cjs."
+    )
+
+
+def _caption_video_encoder_args(encoder_info):
+    if encoder_info["mode"] in {"amf", "nvenc", "qsv"}:
+        hw_encoder = {"amf": "h264_amf", "nvenc": "h264_nvenc", "qsv": "h264_qsv"}[encoder_info["mode"]]
+        args = ["-c:v", hw_encoder]
+        if encoder_info["mode"] == "amf":
+            args.extend(["-quality", "speed", "-rc", "cqp", "-qp_i", "20", "-qp_p", "20"])
+        elif encoder_info["mode"] == "nvenc":
+            args.extend(["-preset", "p4", "-cq", "20"])
+        else:
+            args.extend(["-preset", "veryfast", "-global_quality", "20"])
+        args.extend(["-pix_fmt", "yuv420p"])
+        return args
+    return [
+        "-c:v", "libx264",
+        "-preset", os.environ.get("SNIP_AI_CAPTION_PRESET", "veryfast"),
+        "-crf", os.environ.get("SNIP_AI_CAPTION_CRF", "20"),
+        "-pix_fmt", "yuv420p",
+    ]
+
+
+def _render_uncaptioned_segment(video_path, start, end, output_path, encoder_info):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output_path.unlink()
+    except FileNotFoundError:
+        pass
+    command = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y"]
+    if start > 0:
+        command.extend(["-ss", f"{start:.3f}"])
+    command.extend([
+        "-i", str(video_path),
+        "-t", f"{end - start:.3f}",
+        "-map", "0:v:0", "-map", "0:a?",
+        *_caption_video_encoder_args(encoder_info),
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", str(output_path),
+    ])
+    print(f"No timed words in {start:.0f}-{end:.0f}s; rendering this section without captions.")
+    run_command(command, "Uncaptioned Auto Caption section render")
+    valid, info = validate_mp4(output_path)
+    if not valid:
+        raise RuntimeError(f"Uncaptioned video section failed validation: {info}")
+    return output_path
+
+
+def render_ffmpeg_captioned_clip(video_path, transcript_path, start, end, theme, output_path, encoder_info, framing=None):
+    if theme not in FFMPEG_CAPTION_TEMPLATES:
+        raise RuntimeError(f"Unsupported FFmpeg caption template: {theme}")
+    node = resolve_node()
+    engine = resolve_ffmpeg_caption_engine()
+    temp_dir = Path(output_path).parent / ".snip_ai_tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    relative_transcript = temp_dir / (Path(output_path).stem + ".ffmpeg.transcript.json")
+    filter_script = temp_dir / (Path(output_path).stem + ".caption-filter.txt")
+    write_relative_transcript(
+        transcript_path,
+        start,
+        end,
+        relative_transcript,
+        allow_empty=framing is None,
+    )
+    try:
+        data = json.loads(relative_transcript.read_text(encoding="utf-8"))
+        words = [word for segment in data.get("segments", []) for word in segment.get("words", [])]
+        if not words:
+            if framing is None:
+                return _render_uncaptioned_segment(
+                    video_path, start, end, output_path, encoder_info
+                )
+            raise RuntimeError("No word-level caption timings overlap this clip.")
+        font_map = {
+            "pop": "Poppins.ttf",
+            "karaoke": "LeagueSpartan.ttf",
+            "bold-center": "Anton.ttf",
+            "punch": "AlfaSlabOne.ttf",
+            "minimal": "Nunito.ttf",
+            "highlight-box": "Kanit.ttf",
+            "typewriter": "Teko.ttf",
+            "bounce": "Rubik.ttf",
+            "kinetic": "Oswald.ttf",
+            "podcast": "BebasNeue.ttf",
+            "yellow-stack": "Anton.ttf",
+            "violet-pill": "Poppins.ttf",
+            "dual-line": "Anton.ttf",
+            "bold-karaoke": "Anton.ttf",
+            "soft-lyric": "Nunito.ttf",
+        }
+        font_name = font_map.get(theme)
+        if not font_name:
+            raise RuntimeError(f"No bundled font mapping for caption template: {theme}")
+        font_file = (Path(__file__).resolve().parent / "fonts" / font_name).resolve()
+        if not font_file.is_file():
+            raise RuntimeError(f"Bundled caption font not found: {font_file}")
+
+        caption_width, caption_height = OUT_W, OUT_H
+        if not framing:
+            probe = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", str(video_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if probe.returncode != 0: raise RuntimeError("Could not read input video dimensions: " + probe.stderr[-2000:])
+            streams = json.loads(probe.stdout).get("streams", [])
+            if not streams: raise RuntimeError("Input video has no video stream.")
+            caption_width, caption_height = int(streams[0]["width"]), int(streams[0]["height"])
+        request = json.dumps({
+            "words": words,
+            "options": {
+                "template": theme,
+                "width": caption_width,
+                "height": caption_height,
+                "fontFile": str(font_file),
+                **({"secondaryFontFile": str((Path(__file__).resolve().parent / "fonts" / "Nunito.ttf").resolve())} if theme == "dual-line" else {}),
+            },
+        }, ensure_ascii=False)
+        built = subprocess.run(
+            [str(node), str(engine)], input=request, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+        )
+        if built.returncode != 0:
+            raise RuntimeError("Caption filter generation failed:\n" + built.stderr[-6000:])
+        result = json.loads(built.stdout)
+        if not result.get("filter"):
+            raise RuntimeError("Caption engine generated an empty FFmpeg filter.")
+        frame_filter = f"{build_filter(framing)}," if framing else ""
+        filter_script.write_text(
+            "[0:v]" + frame_filter + result["filter"] + "[vout]\n",
+            encoding="utf-8",
+        )
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            output_path.unlink()
+        except FileNotFoundError:
+            pass
+        render_description = (
+            "FFmpeg frame+caption render"
+            if framing
+            else "FFmpeg caption render"
+        )
+        print(f"\n[RUN] {render_description.upper()}")
+        print(f"Template : {theme}")
+        print(f"Words    : {result.get('wordCount', len(words))}")
+        print(f"Engine   : {engine}")
+        video_encoder_args = _caption_video_encoder_args(encoder_info)
+
+        command = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y"]
+        if framing:
+            command.extend([
+                "-ss", f"{start:.3f}",
+                "-i", str(video_path),
+                "-t", f"{end - start:.3f}",
+            ])
+        else:
+            if start > 0:
+                command.extend(["-ss", f"{start:.3f}"])
+            command.extend([
+                "-i", str(video_path),
+                "-t", f"{end - start:.3f}",
+            ])
+        command.extend([
+            "-/filter_complex", str(filter_script),
+            "-map", "[vout]", "-map", "0:a?",
+            *video_encoder_args,
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", str(output_path),
+        ])
+        run_command(command, render_description)
+        valid, info = validate_mp4(output_path)
+        if not valid:
+            raise RuntimeError(f"Captioned MP4 failed validation: {info}")
+        # Confirm audio remains present when the framed source had audio.
+        probe = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(output_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if probe.returncode != 0:
+            raise RuntimeError("ffprobe could not inspect captioned output: " + probe.stderr[-2000:])
+        stream_types = [item.get("codec_type") for item in json.loads(probe.stdout).get("streams", [])]
+        source_probe = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(video_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        source_types = [item.get("codec_type") for item in json.loads(source_probe.stdout).get("streams", [])] if source_probe.returncode == 0 else []
+        if "audio" in source_types and "audio" not in stream_types:
+            raise RuntimeError("Audio was present in the input clip but is missing from the captioned output.")
+        return {**info, "output": output_path, "word_count": len(words), "renderer": "ffmpeg"}
+    finally:
+        print(f"[DEBUG] Keeping caption filter: {filter_script}")
+        print(f"[DEBUG] Keeping transcript: {relative_transcript}")
+
+
 def render_remotion_captioned_clip(
     video_path,
     transcript_path,
@@ -1431,9 +1691,9 @@ def render_remotion_captioned_clip(
     output_path,
     remotion_pool,
 ):
-    if theme not in REMOTION_THEMES:
+    if theme not in FFMPEG_CAPTION_TEMPLATES:
         raise RuntimeError(
-            f"Unsupported Remotion theme: {theme}"
+            f"Unsupported caption template: {theme}"
         )
 
     temp_dir = (
@@ -1463,10 +1723,10 @@ def render_remotion_captioned_clip(
 
     try:
         print()
-        print("[RUN] REMOTION CAPTION RENDER")
+        print("[RUN] LEGACY REMOTION CAPTION RENDER (unused)")
         print(f"Theme    : {theme}")
         print(f"Duration : {end - start:.3f}s")
-        print("Renderer : persistent worker")
+        print("Renderer : legacy compatibility path")
 
         return remotion_pool.render(
             video_path,
@@ -1558,7 +1818,7 @@ def main():
     print(f"Canvas          : {OUT_W}x{OUT_H}")
     print("Canvas aspect   : 9:16")
     print(f"Framing         : {framing}")
-    print(f"Remotion theme  : {caption_template}")
+    print(f"Caption template: {caption_template}")
     print(f"Different caps  : {different_captions}")
     print("Detection       : OFF")
     print("Auto Pan        : OFF")
@@ -1594,7 +1854,7 @@ def main():
 
     print()
 
-    clean_old_outputs(output_dir)
+    # Preserve clips from earlier runs; never delete prior user outputs automatically.
 
     transcript = source.with_suffix(".transcript.json")
 
@@ -1620,14 +1880,11 @@ def main():
     print("=" * 70)
     print(f"Workers    : {RENDER_WORKERS}")
     print("Mode       : 2 clips simultaneously")
-    print("Remotion   : persistent workers")
+    print("Captions   : FFmpeg filter engine")
     print("=" * 70)
 
-    remotion_pool = PersistentRemotionPool(
-        RENDER_WORKERS
-    )
-
-    remotion_pool.start()
+    # FFmpeg captions render directly in the production pipeline. No Remotion
+    # worker pool is started for caption rendering.
 
     def render_one_clip(index, moment):
         start, end = get_clip_times(moment)
@@ -1647,35 +1904,55 @@ def main():
         )
 
         try:
-            framed_clip = render_framed_source_clip(
-                source,
-                start,
-                end,
-                output,
-                framing,
-                encoder_info,
-            )
-
             try:
-                info = render_remotion_captioned_clip(
-                    framed_clip,
+                info = render_ffmpeg_captioned_clip(
+                    source,
                     transcript,
                     start,
                     end,
                     caption_template,
                     output,
-                    remotion_pool,
+                    encoder_info,
+                    framing=framing,
                 )
-
-            finally:
+            except Exception as one_pass_error:
+                print(
+                    "[WARN] One-pass frame+caption render failed; "
+                    "retrying with the two-pass renderer."
+                )
+                print(str(one_pass_error)[-3000:])
                 try:
-                    framed_clip.unlink()
+                    output.unlink()
                 except FileNotFoundError:
                     pass
 
+                framed_clip = render_framed_source_clip(
+                    source,
+                    start,
+                    end,
+                    output,
+                    framing,
+                    encoder_info,
+                )
+                try:
+                    info = render_ffmpeg_captioned_clip(
+                        framed_clip,
+                        transcript,
+                        start,
+                        end,
+                        caption_template,
+                        output,
+                        encoder_info,
+                    )
+                finally:
+                    try:
+                        framed_clip.unlink()
+                    except FileNotFoundError:
+                        pass
+
             if not output.exists():
                 raise RuntimeError(
-                    "Remotion renderer completed but "
+                    "FFmpeg caption renderer completed but "
                     "final output file was not created."
                 )
 
@@ -1757,7 +2034,7 @@ def main():
                 )
 
     finally:
-        remotion_pool.stop()
+        pass
 
     results.sort(
         key=lambda item: item["index"]
@@ -1817,4 +2094,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

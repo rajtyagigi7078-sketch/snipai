@@ -150,6 +150,16 @@ jobs:
             "$pipeline/story_event_map.py",
             "$pipeline/generation_selector.py",
             "$pipeline/render_clips_simple.py",
+            "$pipeline/whisper_transcribe.py",
+            "$pipeline/hindi_romanize.py",
+            "$pipeline/auto_caption.py",
+            "$pipeline/render_caption_preview.py",
+            "$pipeline/ffmpeg-captions/engine.cjs",
+            "$pipeline/fonts/Poppins.ttf",
+            "$pipeline/swift-node/swift_hinglish.mjs",
+            "$pipeline/swift-node/prepare_swift_model.mjs",
+            "$pipeline/swift-node/package.json",
+            "$pipeline/swift-node/package-lock.json",
           )
 
           foreach ($file in $required) {
@@ -158,13 +168,32 @@ jobs:
             }
           }
 
-          Copy-Item `
-            "whisper_transcribe.py" `
-            "$pipeline/whisper_transcribe.py" `
-            -Force
-
           Write-Host "Bundled pipeline files:"
           Get-ChildItem $pipeline
+
+      # ------------------------------------------------------
+      # SWIFT HINGLISH RUNTIME
+      # ------------------------------------------------------
+
+      - name: Install Swift Hinglish dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Push-Location "windows-runtime/pipeline/swift-node"
+          try {
+            npm ci --omit=dev
+            if ($LASTEXITCODE -ne 0) { throw "Swift Hinglish dependency installation failed with exit code $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Prepare offline Swift Hinglish model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "windows-runtime/node/node.exe" `
+            "windows-runtime/pipeline/swift-node/prepare_swift_model.mjs"
+          if ($LASTEXITCODE -ne 0) { throw "Swift Hinglish model preparation failed with exit code $LASTEXITCODE" }
 
       # ------------------------------------------------------
       # REMOTION CAPTION RENDERER
@@ -403,7 +432,7 @@ jobs:
 
           print(f"Downloaded model snapshot: {snapshot}")
 
-          model_dir = root / "model"
+          model_dir = root / "base"
 
           if model_dir.exists():
               shutil.rmtree(model_dir)
@@ -449,6 +478,7 @@ jobs:
             "windows-runtime/download_model.py"
 
           & $python "windows-runtime/download_model.py"
+          if ($LASTEXITCODE -ne 0) { throw "Whisper Base model download failed with exit code $LASTEXITCODE" }
 
           Remove-Item `
             "windows-runtime/download_model.py" `
@@ -463,7 +493,7 @@ jobs:
 
           Write-Host "Final Whisper model contents:"
           Get-ChildItem `
-            "windows-runtime/whisper-model/model" `
+            "windows-runtime/whisper-model/base" `
             -Recurse |
             Select-Object FullName
 
@@ -489,8 +519,15 @@ jobs:
             "windows-runtime/pipeline/generation_selector.py",
             "windows-runtime/pipeline/render_clips_simple.py",
             "windows-runtime/pipeline/whisper_transcribe.py",
-            "windows-runtime/whisper-model/model/config.json",
-            "windows-runtime/whisper-model/model/model.bin",
+            "windows-runtime/pipeline/auto_caption.py",
+            "windows-runtime/pipeline/render_caption_preview.py",
+            "windows-runtime/pipeline/ffmpeg-captions/engine.cjs",
+            "windows-runtime/pipeline/fonts/Poppins.ttf",
+            "windows-runtime/pipeline/swift-node/swift_hinglish.mjs",
+            "windows-runtime/pipeline/swift-node/node_modules/@huggingface/transformers/.cache/ishaan-g/whisper-hinglish-swift_timestamped/onnx/encoder_model_quantized.onnx",
+            "windows-runtime/pipeline/swift-node/node_modules/@huggingface/transformers/.cache/ishaan-g/whisper-hinglish-swift_timestamped/onnx/decoder_model_merged_quantized.onnx",
+            "windows-runtime/whisper-model/base/config.json",
+            "windows-runtime/whisper-model/base/model.bin",
             "windows-runtime/caption-renderer/src/render.ts",
             "windows-runtime/caption-renderer/node_modules/tsx/dist/cli.mjs",
             "windows-runtime/caption-renderer/node_modules/remotion/package.json",
@@ -505,14 +542,18 @@ jobs:
           }
 
           & $python -c "import faster_whisper; print('faster-whisper: OK')"
+          if ($LASTEXITCODE -ne 0) { throw "faster-whisper import failed" }
 
           & $python -c "import yt_dlp; print('yt-dlp: OK')"
+          if ($LASTEXITCODE -ne 0) { throw "yt-dlp import failed" }
 
           & $python -c "from faster_whisper import WhisperModel; print('WhisperModel: OK')"
+          if ($LASTEXITCODE -ne 0) { throw "WhisperModel import failed" }
 
           & "windows-runtime/node/node.exe" `
             "windows-runtime/caption-renderer/node_modules/tsx/dist/cli.mjs" `
             --version
+          if ($LASTEXITCODE -ne 0) { throw "Remotion runtime check failed" }
 
           Write-Host ""
           Write-Host "===== WINDOWS RUNTIME READY ====="
@@ -531,10 +572,23 @@ jobs:
       # BUILD
       # ------------------------------------------------------
 
+      - name: Validate frontend release configuration
+        shell: pwsh
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VITE_SUPABASE_URL) -or
+              [string]::IsNullOrWhiteSpace($env:VITE_SUPABASE_PUBLISHABLE_KEY)) {
+            throw "Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in repository Actions secrets before publishing."
+          }
+
       - name: Build Windows installer
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         with:
           tagName: v__VERSION__
           releaseName: Snip AI v__VERSION__
